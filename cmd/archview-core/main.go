@@ -30,6 +30,7 @@ func runAnalyze(args []string) {
 	outPath := fs.String("out", "", "output file")
 	projectRoot := fs.String("project-root", "", "project root")
 	configPath := fs.String("config", "", "config file")
+	format := fs.String("format", "json", "output format: json|lua")
 	_ = fs.Parse(args)
 	request := mustLoadRequest(*requestPath, *projectRoot, *configPath)
 	architecture, err := archcore.Analyze(request)
@@ -44,17 +45,13 @@ func runAnalyze(args []string) {
 			fail(err.Error())
 		}
 		defer file.Close()
-		encoder := json.NewEncoder(file)
-		encoder.SetEscapeHTML(false)
-		if err := encoder.Encode(architecture); err != nil {
+		if err := writeArchitecture(file, architecture, *format); err != nil {
 			fail(err.Error())
 		}
 		return
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(architecture); err != nil {
+	if err := writeArchitecture(os.Stdout, architecture, *format); err != nil {
 		fail(err.Error())
 	}
 }
@@ -121,4 +118,18 @@ func mustMkdir(path string) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		fail(err.Error())
 	}
+}
+
+func writeArchitecture(file *os.File, architecture *archcore.Architecture, format string) error {
+	if format == "lua" {
+		payload, err := archcore.EncodeLuaLiteral(architecture)
+		if err != nil {
+			return err
+		}
+		_, err = file.WriteString("return " + payload + "\n")
+		return err
+	}
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	return encoder.Encode(architecture)
 }

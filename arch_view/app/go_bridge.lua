@@ -176,6 +176,8 @@ function go_bridge.analyze(request, opts)
     return nil, err
   end
 
+  local output_path = fs.make_temp_path("archview_response", ".lua")
+
   if _direct_config_available(request) then
     local result = fs.run_command({
       binary_path,
@@ -184,6 +186,10 @@ function go_bridge.analyze(request, opts)
       request.project_root,
       "--config",
       request.config_path,
+      "--format",
+      "lua",
+      "--out",
+      output_path,
     }, {
       cwd = request.project_root,
     })
@@ -195,12 +201,14 @@ function go_bridge.analyze(request, opts)
       )
     end
 
-    local ok, decoded = pcall(json_reader.decode, result.output)
+    local chunk, load_err = loadfile(output_path)
+    fs.remove_path(output_path)
+    if chunk == nil then
+      return nil, load_err
+    end
+    local ok, decoded = pcall(chunk)
     if not ok then
-      return nil, _text(
-        "Go 分析引擎输出无效 JSON",
-        "Go analysis engine returned invalid JSON"
-      )
+      return nil, decoded
     end
     return decoded, binary_path
   end
@@ -216,6 +224,10 @@ function go_bridge.analyze(request, opts)
     "analyze",
     "--request",
     request_path,
+    "--format",
+    "lua",
+    "--out",
+    output_path,
   }, {
     cwd = request.project_root,
   })
@@ -228,12 +240,14 @@ function go_bridge.analyze(request, opts)
     )
   end
 
-  local ok, decoded = pcall(json_reader.decode, result.output)
+  local chunk, load_err = loadfile(output_path)
+  fs.remove_path(output_path)
+  if chunk == nil then
+    return nil, load_err
+  end
+  local ok, decoded = pcall(chunk)
   if not ok then
-    return nil, _text(
-      "Go 分析引擎输出无效 JSON",
-      "Go analysis engine returned invalid JSON"
-    )
+    return nil, decoded
   end
   return decoded, binary_path
 end
