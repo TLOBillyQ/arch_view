@@ -5,6 +5,7 @@ local json_reader = require("arch_view.json_reader")
 local json_writer = require("arch_view.json_writer")
 
 local go_bridge = {}
+local _host_env_cache = nil
 
 local function _text(zh, en)
   return common.bilingual(zh, en)
@@ -21,26 +22,39 @@ local function _binary_name()
   return "archview-core"
 end
 
-local function _go_env(cwd)
-  local result = fs.run_command({ "go", "env", "GOOS", "GOARCH" }, {
-    cwd = cwd,
-  })
+local function _host_env()
+  if _host_env_cache ~= nil then
+    return _host_env_cache
+  end
+
+  if common.is_windows() then
+    local arch = string.lower(tostring(os.getenv("PROCESSOR_ARCHITECTURE") or "amd64"))
+    if arch == "x86_64" then
+      arch = "amd64"
+    end
+    _host_env_cache = {
+      goos = "windows",
+      goarch = arch,
+    }
+    return _host_env_cache
+  end
+
+  local result = fs.run_command({ "uname", "-m" })
   if not result.ok then
     return nil, result.output
   end
-  local lines = {}
-  for line in (result.output .. "\n"):gmatch("(.-)\n") do
-    if line ~= "" then
-      lines[#lines + 1] = _trim(line)
-    end
+  local arch = _trim(result.output)
+  if arch == "x86_64" then
+    arch = "amd64"
+  elseif arch == "aarch64" then
+    arch = "arm64"
   end
-  if #lines < 2 then
-    return nil, result.output
-  end
-  return {
-    goos = lines[1],
-    goarch = lines[2],
+
+  _host_env_cache = {
+    goos = common.is_macos() and "darwin" or "linux",
+    goarch = arch,
   }
+  return _host_env_cache
 end
 
 local function _toolchain_root(project_root, opts)
@@ -51,7 +65,7 @@ local function _toolchain_root(project_root, opts)
 end
 
 local function _binary_path(project_root, opts)
-  local env, err = _go_env(opts.package_root)
+  local env, err = _host_env()
   if env == nil then
     return nil, err
   end
@@ -61,36 +75,53 @@ local function _binary_path(project_root, opts)
   )
 end
 
-local function _latest_source_mtime(package_root)
-  local latest = 0
-  local files, err = fs.collect_files(package_root, ".go")
-  if not files then
-    return nil, err
-  end
-  for _, path in ipairs(files) do
-    local mtime = fs.path_mtime(path) or 0
-    if mtime > latest then
-      latest = mtime
+local function _has_newer_source(binary_path, package_root)
+  if common.is_windows() then
+    local latest = 0
+    local files, err = fs.collect_files(package_root, ".go")
+    if not files then
+      return nil, err
     end
-  end
-  for _, extra in ipairs({ fs.join_path(package_root, "go.mod"), fs.join_path(package_root, "go.sum") }) do
-    if fs.path_exists(extra) then
-      local mtime = fs.path_mtime(extra) or 0
+    for _, path in ipairs(files) do
+      local mtime = fs.path_mtime(path) or 0
       if mtime > latest then
         latest = mtime
       end
     end
+    for _, extra in ipairs({ fs.join_path(package_root, "go.mod"), fs.join_path(package_root, "go.sum") }) do
+      if fs.path_exists(extra) then
+        local mtime = fs.path_mtime(extra) or 0
+        if mtime > latest then
+          latest = mtime
+        end
+      end
+    end
+    return latest > (fs.path_mtime(binary_path) or 0)
   end
-  return latest
+
+  local command = table.concat({
+    "find ",
+    common.shell_quote(package_root),
+    " \\( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \\) -type f -newer ",
+    common.shell_quote(binary_path),
+    " | head -n 1",
+  })
+  local result = fs.run_command(command)
+  if not result.ok then
+    return nil, result.output
+  end
+  return _trim(result.output) ~= ""
 end
 
 local function _should_rebuild(binary_path, package_root)
   if not fs.path_exists(binary_path) then
     return true
   end
-  local binary_mtime = fs.path_mtime(binary_path) or 0
-  local source_mtime = _latest_source_mtime(package_root) or 0
-  return source_mtime > binary_mtime
+  local changed, err = _has_newer_source(binary_path, package_root)
+  if changed == nil then
+    return nil, err
+  end
+  return changed
 end
 
 function go_bridge.ensure_binary(project_root, opts)
@@ -104,7 +135,11 @@ function go_bridge.ensure_binary(project_root, opts)
     return nil, path_err
   end
 
-  if not _should_rebuild(binary_path, package_root) then
+  local should_rebuild, rebuild_err = _should_rebuild(binary_path, package_root)
+  if should_rebuild == nil then
+    return nil, rebuild_err
+  end
+  if not should_rebuild then
     return binary_path
   end
 
