@@ -1,8 +1,8 @@
 require("tests.bootstrap")
 
 local arch_view = require("arch_view")
-local common = require("arch_view.common")
-local json_writer = require("arch_view.json_writer")
+local common = require("arch_view.runtime.common")
+local json_writer = require("arch_view.runtime.json_writer")
 
 local repo_root = common.normalize_path(common.current_dir())
 local tmp_root = common.join_path(common.system_tmp_dir(), "arch_view_test_api")
@@ -73,8 +73,7 @@ local function _write_sample_project(project_root)
 {
   "source_roots": ["src"],
   "component_rules": [
-    {"name": "core", "match": ["core.*"]},
-    {"name": "ui", "match": ["ui.*"]}
+    {"name": "core", "match": ["^src$", "^src%..+"], "component": "core"}
   ]
 }
 ]])

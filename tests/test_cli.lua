@@ -1,7 +1,7 @@
 require("tests.bootstrap")
 
 local cli = require("arch_view.cli")
-local common = require("arch_view.common")
+local common = require("arch_view.runtime.common")
 
 local repo_root = common.normalize_path(common.current_dir())
 local tmp_root = common.join_path(common.system_tmp_dir(), "arch_view_test_cli")
@@ -43,7 +43,7 @@ local function _write_sample_project(project_root)
 {
   "source_roots": ["src"],
   "component_rules": [
-    {"name": "core", "match": ["core.*"]}
+    {"name": "core", "match": ["^src$", "^src%..+"], "component": "core"}
   ]
 }
 ]])
@@ -111,9 +111,27 @@ local function test_cli_respects_project_root()
     end)
 end
 
+local function test_cli_viewer_respects_project_root_for_relative_out_dir()
+    _with_clean_tmp(function()
+        local project_root = common.join_path(tmp_root, "cli_viewer_root")
+        _write_sample_project(project_root)
+
+        local result = cli.run({
+            "viewer",
+            "--out-dir", ".arch_view/custom-viewer",
+            "--project-root", project_root,
+        })
+
+        assert(result == true, "cli viewer should respect --project-root")
+        assert(_exists(common.join_path(project_root, ".arch_view/custom-viewer/index.html")),
+            "viewer output should be rooted at project_root")
+    end)
+end
+
 return {
     test_cli_scan_command = test_cli_scan_command,
     test_cli_check_command = test_cli_check_command,
     test_cli_viewer_command = test_cli_viewer_command,
     test_cli_respects_project_root = test_cli_respects_project_root,
+    test_cli_viewer_respects_project_root_for_relative_out_dir = test_cli_viewer_respects_project_root_for_relative_out_dir,
 }

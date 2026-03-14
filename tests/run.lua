@@ -3,7 +3,7 @@ require("tests.bootstrap")
 local test_modules = {
   "tests.test_api",
   "tests.test_cli",
-  "tests.test_go_bridge",
+  "tests.test_core_bridge",
 }
 
 local failures = {}

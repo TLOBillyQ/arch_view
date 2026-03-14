@@ -32,14 +32,16 @@ If you still pass `engine="lua"`, migrate to `engine="go"` or `engine="auto"`.
 ## Repository layout
 
 - `arch_view.lua`: canonical public API entrypoint (`require("arch_view")`)
-- `arch_view/app/*`: config loading, Go bridge, service orchestration, CLI wiring
-- `arch_view/*.lua`: compatibility and helper modules
-- `internal/archcore/*`: Go core implementation
-- `cmd/archview-core`: Go CLI entrypoint used by the Lua bridge
+- `arch_view/cli.lua`: public CLI facade (`require("arch_view.cli")`)
+- `arch_view/internal/*`: config loading, core bridge, service orchestration, CLI wiring
+- `arch_view/runtime/*`: host/runtime helpers for filesystem, JSON, and path handling
+- `internal/core/*`: Go core implementation
+- `cmd/arch-view-core`: Go CLI entrypoint used by the Lua bridge
 - `bin/arch_view.lua`: standalone CLI entrypoint
 - `viewer/*`: bundled static viewer assets copied to export directory
 - `examples/*`: sample config and vendored-host usage
 - `tests/*`: Lua contract/integration tests
+- `docs/architecture/go-first-refactor.md`: architecture notes for the Go-first layout
 
 ---
 
@@ -113,6 +115,7 @@ Available entrypoints:
 
 - `load_config(path)`
 - `analyze(opts)`
+- `check(opts)`
 - `write_scan(opts)`
 - `export_viewer(opts)`
 - `run_cli(args, opts)`
@@ -135,9 +138,9 @@ Common `opts` fields:
 
 ## Go core and toolchain behavior
 
-- Core source: `internal/archcore`, entrypoint: `cmd/archview-core`
+- Core source: `internal/core`, entrypoint: `cmd/arch-view-core`
 - Lua bridge builds binary on demand:
-  - `go build -o <project>/.arch_view/toolchain/<goos>-<goarch>/archview-core ./cmd/archview-core`
+  - `go build -o <project>/.arch_view/toolchain/<goos>-<goarch>/arch-view-core ./cmd/arch-view-core`
 - Cached binary is reused until Go sources/deps change
 - A working local Go toolchain is required for runtime analysis/export
 
@@ -145,12 +148,10 @@ Common `opts` fields:
 
 ## Compatibility notes
 
-Legacy imports remain available as compatibility layers:
-
-- `require("arch_view.build")`
-- `require("arch_view.cli")`
-
-Some legacy Lua core modules may still exist during transition, but the main execution path is Go-only. New code should not depend on Lua core internals.
+- Supported public entrypoints remain:
+  - `require("arch_view")`
+  - `require("arch_view.cli")`
+- Internal Lua module paths are intentionally private to this repository layout. Depend on the public API only.
 
 ---
 

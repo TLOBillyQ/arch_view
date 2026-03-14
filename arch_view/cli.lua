@@ -1,5 +1,5 @@
-local app_cli = require("arch_view.app.cli")
-local common = require("arch_view.common")
+local cli_runner = require("arch_view.internal.cli_runner")
+local common = require("arch_view.runtime.common")
 
 local cli = {}
 
@@ -23,7 +23,7 @@ function cli.run(args, env)
     opts.asset_root = common.join_path(env.script_dir, "viewer")
   end
 
-  return app_cli.run(_copy_args(args), opts)
+  return cli_runner.run(_copy_args(args), opts)
 end
 
 return cli

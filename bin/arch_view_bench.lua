@@ -25,9 +25,9 @@ append_path(repo_root .. "/?.lua")
 append_path(repo_root .. "/?/?.lua")
 
 local arch_view = require("arch_view")
-local go_bridge = require("arch_view.app.go_bridge")
-local common = require("arch_view.common")
-local json_writer = require("arch_view.json_writer")
+local core_bridge = require("arch_view.internal.core_bridge")
+local common = require("arch_view.runtime.common")
+local json_writer = require("arch_view.runtime.json_writer")
 
 local project_root = arg[1] or "."
 local config_path = arg[2] or common.join_path(project_root, "arch_view.config.json")
@@ -48,13 +48,13 @@ local function bench_api(engine_name)
   return (os.clock() - started) / iterations
 end
 
-for _, engine_name in ipairs({ "lua", "go", "auto" }) do
+for _, engine_name in ipairs({ "go", "auto" }) do
   local avg = bench_api(engine_name)
   io.write(string.format("%s avg: %.3f ms\n", engine_name, avg * 1000.0))
 end
 
 local config = assert(arch_view.load_config(config_path))
-local binary = assert(go_bridge.ensure_binary(common.resolve_path(common.current_dir(), project_root)))
+local binary = assert(core_bridge.ensure_binary(common.resolve_path(common.current_dir(), project_root)))
 local request_path = common.make_temp_path("archview_bench", ".json")
 assert(common.write_file(request_path, json_writer.encode({
   project_root = common.resolve_path(common.current_dir(), project_root),
