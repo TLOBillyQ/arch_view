@@ -425,3 +425,287 @@ Go 成为唯一核心后，运行环境将更依赖：
 > Lua 负责“接入”，Go 负责“能力”。
 
 这将显著降低双实现维护成本，减少输出漂移风险，并让系统边界更清晰。
+
+---
+
+# 下一阶段：清理废弃、遗留、兼容代码
+
+## 目标
+
+在 Go-First 架构基础上，**安全清理废弃、遗留、兼容代码**，让仓库结构清晰反映新架构。
+
+---
+
+## 当前状态（Go-First 重构完成后）
+
+### 已完成的重构
+
+- ✅ Go 成为唯一分析引擎
+- ✅ viewer 导出链路由 Go 主导
+- ✅ Lua 核心模块标记为废弃
+- ✅ 公共 API 保持兼容
+- ✅ README 和 CLI 更新
+
+### 仍存在的遗留代码
+
+#### 废弃的 Lua 核心模块（已标记 DEPRECATED）
+
+```
+arch_view/source_scan.lua      - 扫描逻辑
+arch_view/dependency_extract.lua - 依赖提取
+arch_view/checker.lua          - 校验逻辑
+arch_view/layers.lua           - 分层布局
+arch_view/projection.lua       - 视图投影
+arch_view/layout_renderer.lua  - 布局渲染
+arch_view/route_engine.lua     - 路由引擎
+```
+
+#### 测试中对废弃模块的直接引用
+
+```
+tests/arch_view_contract.lua   - 直接 require 并测试所有 Lua 核心模块
+```
+
+---
+
+## 清理原则
+
+### 1. 安全优先
+- 不直接删除可能有外部依赖的文件
+- 先添加运行时警告，再删除
+- 保留至少一个版本的兼容周期
+
+### 2. 逐步推进
+1. 先移除内部引用（已完成）
+2. 再迁移测试
+3. 最后删除文件或改为代理
+
+### 3. 保留必要兼容层
+- `arch_view.build` 作为公共 API 保留
+- `arch_view.cli` 作为公共 API 保留
+
+---
+
+## 清理阶段
+
+---
+
+## Phase 6: 迁移测试
+
+### 目标
+
+将 `tests/arch_view_contract.lua` 从测试 Lua 核心模块改为测试公共 API 和 Go 桥接。
+
+### 任务
+
+#### 1. 评估现有测试内容
+- 列出所有直接引用 Lua 核心模块的测试用例
+- 评估哪些测试需要保留（行为兼容性）
+- 评估哪些测试可以直接删除（实现细节）
+
+#### 2. 新建测试结构
+创建新的测试文件：
+
+```
+tests/
+├── test_api.lua              # 测试公共 API
+├── test_go_bridge.lua        # 测试 Go 桥接
+└── test_cli.lua              # 测试 CLI
+```
+
+#### 3. 迁移关键测试用例
+
+从原测试迁移以下内容：
+- 配置加载测试
+- analyze API 测试
+- check API 测试
+- export_viewer API 测试
+- CLI 参数解析测试
+
+#### 4. 删除/归档旧测试
+- 删除原 `arch_view_contract.lua` 中测试 Lua 核心实现的用例
+- 或将其移动为 `tests/legacy/` 下的归档文件
+
+### 验收标准
+
+- [ ] 新测试覆盖公共 API 主要路径
+- [ ] 新测试通过 Go 引擎验证行为
+- [ ] 旧测试不再直接引用废弃模块 或 被明确标记为 legacy
+
+---
+
+## Phase 7: 简化 build.lua
+
+### 目标
+
+将 `arch_view/build.lua` 进一步简化为纯代理层。
+
+### 当前状态
+
+```lua
+-- build.lua 当前包含：
+- validate_config()  - 基本类型检查
+- analyze()          - 调用 go_bridge
+```
+
+### 任务
+
+#### 1. 评估 validate_config
+- 当前 Lua 侧只有基本类型检查
+- 考虑是否完全委托给 Go 进行校验
+- 或保留轻量级预校验
+
+#### 2. 统一入口
+确保 `build.analyze()` 是 `go_bridge.analyze()` 的薄代理。
+
+### 验收标准
+
+- [ ] `build.lua` 不含任何核心算法
+- [ ] 所有分析调用都通过 `go_bridge`
+
+---
+
+## Phase 8: 废弃模块处理
+
+### 目标
+
+处理标记为 DEPRECATED 的 Lua 核心模块。
+
+### 方案选择
+
+#### 方案 A: 直接删除（如果确定无外部引用）
+
+直接删除文件：
+```bash
+git rm arch_view/source_scan.lua
+git rm arch_view/dependency_extract.lua
+...
+```
+
+#### 方案 B: 改为代理/错误（推荐，更安全）
+
+将废弃模块改为返回错误：
+
+```lua
+-- arch_view/source_scan.lua
+return function()
+    error("source_scan is deprecated. Use arch_view.app.go_bridge or arch_view.app.service instead.")
+end
+```
+
+或改为代理到 Go：
+
+```lua
+-- arch_view/source_scan.lua
+local go_bridge = require("arch_view.app.go_bridge")
+-- 代理到 Go 实现
+```
+
+#### 方案 C: 移动到 legacy/ 目录
+
+```
+arch_view/
+├── legacy/
+│   ├── source_scan.lua
+│   ├── dependency_extract.lua
+│   └── ...
+```
+
+### 推荐方案
+
+对外部用户最安全的是 **方案 B - 改为错误提示**，给一个版本周期后再删除。
+
+### 验收标准
+
+- [ ] 废弃模块不再包含可运行的核心代码
+- [ ] 调用废弃模块会返回明确的迁移提示
+- [ ] 仓库中不再存在两套完整的核心实现
+
+---
+
+## Phase 9: 最终清理
+
+### 目标
+
+删除所有遗留代码，完成架构收敛。
+
+### 任务
+
+#### 1. 删除废弃模块
+在确认无外部引用后，彻底删除：
+- `arch_view/source_scan.lua`
+- `arch_view/dependency_extract.lua`
+- `arch_view/checker.lua`
+- `arch_view/layers.lua`
+- `arch_view/projection.lua`
+- `arch_view/layout_renderer.lua`
+- `arch_view/route_engine.lua`
+
+#### 2. 清理测试归档
+删除 `tests/legacy/`（如果之前归档了旧测试）
+
+#### 3. 更新文档
+- README 中移除废弃模块的提及
+- 添加迁移指南（如果用户之前依赖内部模块）
+
+### 验收标准
+
+- [ ] 仓库中只保留一套核心实现（Go）
+- [ ] Lua 目录清晰表示为接入层
+- [ ] 所有测试通过
+
+---
+
+## 风险与回滚策略
+
+### 风险
+
+1. **外部依赖**: 如果用户直接 `require("arch_view.checker")` 等内部模块
+2. **Submodule 引用**: 如果 repo 被作为 submodule 使用
+
+### 回滚策略
+
+- 每个 Phase 单独提交
+- 保留 `legacy/` 分支或 tag 作为备份
+- 在 CHANGELOG 中明确标注破坏性变更
+
+---
+
+## 实施建议顺序
+
+1. **Phase 6**: 迁移测试（确保新测试覆盖核心行为）
+2. **Phase 7**: 简化 build.lua（清理入口层）
+3. **Phase 8**: 废弃模块改为错误提示（给用户迁移时间）
+4. **Phase 9**: 最终删除（确认安全后执行）
+
+---
+
+## 预计最终结构
+
+```
+arch_view/
+├── app/
+│   ├── cli.lua           # CLI 入口
+│   ├── config.lua        # 配置加载
+│   ├── engine.lua        # 引擎调度（Go-only）
+│   ├── go_bridge.lua     # Go 桥接
+│   ├── paths.lua         # 路径管理
+│   └── service.lua       # 服务编排
+├── support/
+│   ├── fs.lua            # 文件系统
+│   └── module_path.lua   # 模块路径
+├── common.lua            # 公共工具
+├── json_reader.lua       # JSON 读取
+├── json_writer.lua       # JSON 写入
+├── build.lua             # 兼容层（薄代理）
+├── cli.lua               # 兼容层（薄代理）
+└── init.lua              # 主入口
+
+internal/archcore/        # Go 核心实现
+cmd/archview-core/        # Go CLI
+viewer/                   # 静态资源
+tests/
+├── test_api.lua
+├── test_go_bridge.lua
+└── test_cli.lua
+```
