@@ -1,5 +1,6 @@
 require("tests.bootstrap")
 
+local arch_view = require("arch_view")
 local build = require("arch_view.build")
 local checker = require("arch_view.checker")
 local cli = require("arch_view.cli")
@@ -38,6 +39,12 @@ local function _read_file(path)
   return content
 end
 
+local function _assert_not_contains(text, expected, message)
+  if tostring(text or ""):find(expected, 1, true) ~= nil then
+    error((message or "unexpected value present") .. "\nunexpected: " .. tostring(expected))
+  end
+end
+
 local function _exists(path)
   return common.path_exists(path) == true
 end
@@ -66,10 +73,7 @@ local function _write_file(path, text)
 end
 
 local function _write_sample_project(project_root)
-  _write_file(common.join_path(project_root, "src/demo/pkg/init.lua"), 'local beta = require("src.demo.beta")\nreturn beta\n')
-  _write_file(common.join_path(project_root, "src/demo/pkg/child.lua"), "return {}\n")
-  _write_file(common.join_path(project_root, "src/demo/beta.lua"), "return {}\n")
-  _write_file(common.join_path(project_root, "arch_config.lua"), table.concat({
+  local config_text = table.concat({
     "return {",
     '  source_roots = { "src" },',
     "  component_rules = {",
@@ -79,7 +83,12 @@ local function _write_sample_project(project_root)
     "  forbidden_dependency_rules = {},",
     "}",
     "",
-  }, "\n"))
+  }, "\n")
+  _write_file(common.join_path(project_root, "src/demo/pkg/init.lua"), 'local beta = require("src.demo.beta")\nreturn beta\n')
+  _write_file(common.join_path(project_root, "src/demo/pkg/child.lua"), "return {}\n")
+  _write_file(common.join_path(project_root, "src/demo/beta.lua"), "return {}\n")
+  _write_file(common.join_path(project_root, "arch_config.lua"), config_text)
+  _write_file(common.join_path(project_root, "arch_view.config.lua"), config_text)
 end
 
 local function _test_dependency_extract_supports_static_requires()
@@ -370,6 +379,99 @@ local function _test_build_and_cli_respect_default_config_path()
   end)
 end
 
+local function _test_public_api_uses_default_config_and_exports_viewer()
+  _with_clean_tmp(function()
+    local project_root = common.join_path(tmp_root, "public_api_project")
+    _write_sample_project(project_root)
+
+    local architecture, err = arch_view.analyze({
+      project_root = project_root,
+    })
+    if architecture == nil then
+      error(err)
+    end
+
+    _assert_eq(architecture.modules["src.demo.pkg"].component, "demo", "public API should find default config")
+
+    local scan_result, scan_err = arch_view.write_scan({
+      architecture = architecture,
+      project_root = project_root,
+      out_path = common.join_path(project_root, ".arch_view/architecture.json"),
+    })
+    if scan_result == nil then
+      error(scan_err)
+    end
+    assert(_exists(scan_result.out_path), "write_scan should write architecture json")
+
+    local viewer_result, viewer_err = arch_view.export_viewer({
+      architecture = architecture,
+      project_root = project_root,
+    })
+    if viewer_result == nil then
+      error(viewer_err)
+    end
+
+    assert(_exists(common.join_path(project_root, ".arch_view/viewer/index.html")), "export_viewer should use default output directory")
+    assert(_exists(common.join_path(project_root, ".arch_view/viewer/architecture_data.js")), "export_viewer should write viewer payload")
+  end)
+end
+
+local function _test_bin_entrypoint_runs_standalone()
+  _with_clean_tmp(function()
+    local project_root = common.join_path(tmp_root, "bin_project")
+    local scan_path = common.join_path(project_root, ".arch_view/architecture.json")
+    local viewer_dir = common.join_path(project_root, ".arch_view/viewer")
+    _write_sample_project(project_root)
+
+    local scan = common.run_command({
+      "lua",
+      common.join_path(repo_root, "bin/arch_view.lua"),
+      "scan",
+      "--out",
+      ".arch_view/architecture.json",
+    }, {
+      cwd = project_root,
+    })
+    assert(scan.ok == true, "bin scan should succeed\n" .. tostring(scan.output))
+    assert(_exists(scan_path), "bin scan should write output in project cwd")
+
+    local viewer = common.run_command({
+      "lua",
+      common.join_path(repo_root, "bin/arch_view.lua"),
+      "viewer",
+      "--in-json",
+      ".arch_view/architecture.json",
+    }, {
+      cwd = project_root,
+    })
+    assert(viewer.ok == true, "bin viewer should succeed\n" .. tostring(viewer.output))
+    assert(_exists(common.join_path(viewer_dir, "index.html")), "bin viewer should write default viewer directory")
+  end)
+end
+
+local function _test_viewer_export_is_self_contained_and_generic()
+  _with_clean_tmp(function()
+    local project_root = common.join_path(tmp_root, "viewer_project")
+    local out_dir = common.join_path(project_root, ".arch_view/viewer")
+    _write_sample_project(project_root)
+
+    local result, err = arch_view.export_viewer({
+      project_root = project_root,
+    })
+    if result == nil then
+      error(err)
+    end
+
+    local exported_index = _read_file(common.join_path(out_dir, "index.html"))
+    local exported_styles = _read_file(common.join_path(out_dir, "styles.css"))
+    _assert_not_contains(exported_index, "Monopoly", "viewer title should be generic")
+    _assert_not_contains(exported_index, "fonts.googleapis.com", "viewer should not depend on Google Fonts")
+    _assert_not_contains(exported_index, "fonts.gstatic.com", "viewer should not depend on Google Fonts")
+    _assert_not_contains(exported_styles, "\"DM Sans\"", "viewer styles should not reference external font families")
+    _assert_not_contains(exported_styles, "\"Instrument Serif\"", "viewer styles should not reference external font families")
+  end)
+end
+
 local function _test_tool_is_self_contained()
   local common_source = _read_file(common.join_path(repo_root, "arch_view/common.lua"))
   local script_common_source = _read_file(common.join_path(repo_root, "arch_view/script_common.lua"))
@@ -387,6 +489,9 @@ return {
     { name = "route_engine_avoids_exact_overlap", run = _test_route_engine_avoids_exact_overlap },
     { name = "json_round_trip", run = _test_json_round_trip },
     { name = "build_and_cli_respect_default_config_path", run = _test_build_and_cli_respect_default_config_path },
+    { name = "public_api_uses_default_config_and_exports_viewer", run = _test_public_api_uses_default_config_and_exports_viewer },
+    { name = "bin_entrypoint_runs_standalone", run = _test_bin_entrypoint_runs_standalone },
+    { name = "viewer_export_is_self_contained_and_generic", run = _test_viewer_export_is_self_contained_and_generic },
     { name = "tool_is_self_contained", run = _test_tool_is_self_contained },
   },
 }

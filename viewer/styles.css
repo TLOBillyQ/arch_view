@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    Arch View — "Obsidian Blueprint"
-   Graph-dominant layout · compact chrome · Instrument Serif × DM Sans
+   Graph-dominant layout · compact chrome · chartered serif × system sans
    ═══════════════════════════════════════════════════════════════ */
 
 /* ── shared tokens ──────────────────────────────────────────── */
@@ -186,7 +186,7 @@ body {
         radial-gradient(circle at bottom right, var(--bg_glow_cool), transparent 34%),
         var(--bg);
     color: var(--text);
-    font-family: "DM Sans", system-ui, sans-serif;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -247,7 +247,7 @@ button, input, select, textarea { font: inherit; }
 }
 
 .toolbar_mark {
-    font-family: "Instrument Serif", Georgia, serif;
+    font-family: Georgia, "Times New Roman", serif;
     font-size: 15px;
     font-weight: 400;
     color: var(--accent);
@@ -316,7 +316,7 @@ button, input, select, textarea { font: inherit; }
 }
 
 .stat strong {
-    font-family: "Instrument Serif", Georgia, serif;
+    font-family: Georgia, "Times New Roman", serif;
     font-size: 14px;
     font-weight: 400;
     letter-spacing: -0.02em;
@@ -788,7 +788,7 @@ button, input, select, textarea { font: inherit; }
 
 .detail_header h2 {
     margin: 0;
-    font-family: "Instrument Serif", Georgia, serif;
+    font-family: Georgia, "Times New Roman", serif;
     font-size: 1.4rem;
     font-weight: 400;
     line-height: 1.1;
