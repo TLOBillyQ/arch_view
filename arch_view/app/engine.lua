@@ -2,6 +2,8 @@ local build = require("arch_view.build")
 local common = require("arch_view.common")
 local go_bridge = require("arch_view.app.go_bridge")
 local paths = require("arch_view.app.paths")
+local fs = require("arch_view.support.fs")
+local json_writer = require("arch_view.json_writer")
 
 local engine = {}
 local _warnings = {}
@@ -119,6 +121,67 @@ function engine.check(resolved)
     return nil, lua_err
   end
   return architecture.check, "lua"
+end
+
+local function _lua_write_json(resolved, out_path)
+  local architecture, err = _lua_analyze(resolved)
+  if architecture == nil then
+    return nil, err
+  end
+  local ok, mkdir_err = fs.ensure_parent_dir(out_path)
+  if not ok then
+    return nil, mkdir_err
+  end
+  local write_ok, write_err = fs.write_file(out_path, json_writer.encode(architecture))
+  if not write_ok then
+    return nil, write_err
+  end
+  return architecture, "lua"
+end
+
+local function _go_write_json(resolved, out_path)
+  local json_path, binary_path_or_err = go_bridge.write_architecture_json({
+    project_root = resolved.project_root,
+    config_path = resolved.config_path,
+    config = resolved.config,
+  }, out_path, {
+    package_root = resolved.package_root or paths.package_root(),
+    toolchain_root = resolved.toolchain_root,
+  })
+  if json_path == nil then
+    return nil, binary_path_or_err
+  end
+  return nil, "go", binary_path_or_err
+end
+
+function engine.write_json(resolved, out_path)
+  local requested = tostring(resolved.engine or "auto")
+  if requested == "lua" then
+    return _lua_write_json(resolved, out_path)
+  end
+  if requested == "go" then
+    local architecture, used_engine, binary_path_or_err = _go_write_json(resolved, out_path)
+    if used_engine == "go" then
+      return architecture, "go", binary_path_or_err
+    end
+    return nil, used_engine
+  end
+
+  local architecture, go_state, binary_path_or_err = _go_write_json(resolved, out_path)
+  if go_state == "go" then
+    return architecture, "go", binary_path_or_err
+  end
+
+  _warn_once("go_write_fallback", _text(
+    "警告: Go 导出引擎不可用，回退到 Lua 实现。原因: " .. tostring(go_state),
+    "Warning: Go export engine unavailable, falling back to Lua implementation. Reason: " .. tostring(go_state)
+  ))
+
+  local lua_architecture, lua_err = _lua_write_json(resolved, out_path)
+  if lua_architecture == nil then
+    return nil, lua_err
+  end
+  return lua_architecture, "lua"
 end
 
 return engine

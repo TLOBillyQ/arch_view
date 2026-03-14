@@ -22,6 +22,11 @@ local function _binary_name()
   return "archview-core"
 end
 
+local function _direct_config_available(request)
+  return request ~= nil and request.project_root ~= nil and request.project_root ~= ""
+    and request.config_path ~= nil and request.config_path ~= ""
+end
+
 local function _host_env()
   if _host_env_cache ~= nil then
     return _host_env_cache
@@ -171,6 +176,35 @@ function go_bridge.analyze(request, opts)
     return nil, err
   end
 
+  if _direct_config_available(request) then
+    local result = fs.run_command({
+      binary_path,
+      "analyze",
+      "--project-root",
+      request.project_root,
+      "--config",
+      request.config_path,
+    }, {
+      cwd = request.project_root,
+    })
+
+    if not result.ok then
+      return nil, _text(
+        "Go 分析引擎运行失败:\n" .. tostring(result.output),
+        "Go analysis engine failed:\n" .. tostring(result.output)
+      )
+    end
+
+    local ok, decoded = pcall(json_reader.decode, result.output)
+    if not ok then
+      return nil, _text(
+        "Go 分析引擎输出无效 JSON",
+        "Go analysis engine returned invalid JSON"
+      )
+    end
+    return decoded, binary_path
+  end
+
   local request_path = fs.make_temp_path("archview_request", ".json")
   local write_ok, write_err = fs.write_file(request_path, json_writer.encode(request))
   if not write_ok then
@@ -204,11 +238,99 @@ function go_bridge.analyze(request, opts)
   return decoded, binary_path
 end
 
+function go_bridge.write_architecture_json(request, out_path, opts)
+  opts = opts or {}
+  local binary_path, err = go_bridge.ensure_binary(request.project_root, opts)
+  if binary_path == nil then
+    return nil, err
+  end
+
+  if _direct_config_available(request) then
+    local result = fs.run_command({
+      binary_path,
+      "analyze",
+      "--project-root",
+      request.project_root,
+      "--config",
+      request.config_path,
+      "--out",
+      out_path,
+    }, {
+      cwd = request.project_root,
+    })
+
+    if not result.ok then
+      return nil, _text(
+        "Go 分析引擎导出失败:\n" .. tostring(result.output),
+        "Go analysis engine export failed:\n" .. tostring(result.output)
+      )
+    end
+
+    return out_path, binary_path
+  end
+
+  local request_path = fs.make_temp_path("archview_request", ".json")
+  local write_ok, write_err = fs.write_file(request_path, json_writer.encode(request))
+  if not write_ok then
+    return nil, write_err
+  end
+
+  local result = fs.run_command({
+    binary_path,
+    "analyze",
+    "--request",
+    request_path,
+    "--out",
+    out_path,
+  }, {
+    cwd = request.project_root,
+  })
+  fs.remove_path(request_path)
+
+  if not result.ok then
+    return nil, _text(
+      "Go 分析引擎导出失败:\n" .. tostring(result.output),
+      "Go analysis engine export failed:\n" .. tostring(result.output)
+    )
+  end
+
+  return out_path, binary_path
+end
+
 function go_bridge.check(request, opts)
   opts = opts or {}
   local binary_path, err = go_bridge.ensure_binary(request.project_root, opts)
   if binary_path == nil then
     return nil, err
+  end
+
+  if _direct_config_available(request) then
+    local result = fs.run_command({
+      binary_path,
+      "check",
+      "--project-root",
+      request.project_root,
+      "--config",
+      request.config_path,
+    }, {
+      cwd = request.project_root,
+    })
+
+    if not result.ok then
+      return nil, _text(
+        "Go 分析引擎检查失败:\n" .. tostring(result.output),
+        "Go analysis engine check failed:\n" .. tostring(result.output)
+      )
+    end
+
+    local ok, decoded = pcall(json_reader.decode, result.output)
+    if not ok then
+      return nil, _text(
+        "Go 检查输出无效 JSON",
+        "Go check returned invalid JSON"
+      )
+    end
+    return decoded, binary_path
   end
 
   local request_path = fs.make_temp_path("archview_request", ".json")

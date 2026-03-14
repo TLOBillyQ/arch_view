@@ -28,7 +28,15 @@ local function _load_architecture_json(path)
   return json_reader.decode(content)
 end
 
-local function _resolve_analysis(opts)
+local function _read_architecture_json_text(path)
+  local content, err = fs.read_file(path)
+  if content == nil then
+    return nil, err
+  end
+  return tostring(content):match("^%s*(.-)%s*$")
+end
+
+local function _resolve_context(opts)
   local resolved, err = config_loader.resolve(opts)
   if resolved == nil then
     return nil, err
@@ -37,6 +45,14 @@ local function _resolve_analysis(opts)
   resolved.engine = opts.engine or "auto"
   resolved.package_root = opts.package_root or paths.package_root()
   resolved.toolchain_root = opts.toolchain_root and fs.resolve_path(fs.current_dir(), opts.toolchain_root) or nil
+  return resolved
+end
+
+local function _resolve_analysis(opts)
+  local resolved, err = _resolve_context(opts)
+  if resolved == nil then
+    return nil, err
+  end
 
   local architecture, used_engine, extra = engine.analyze(resolved)
   if architecture == nil then
@@ -63,14 +79,10 @@ end
 
 function service.check(opts)
   opts = opts or {}
-  local resolved, err = config_loader.resolve(opts)
+  local resolved, err = _resolve_context(opts)
   if resolved == nil then
     return nil, err
   end
-
-  resolved.engine = opts.engine or "auto"
-  resolved.package_root = opts.package_root or paths.package_root()
-  resolved.toolchain_root = opts.toolchain_root and fs.resolve_path(fs.current_dir(), opts.toolchain_root) or nil
 
   local check_result, used_engine = engine.check(resolved)
   if check_result == nil then
@@ -87,16 +99,6 @@ end
 
 function service.write_scan(opts)
   opts = opts or {}
-  local architecture = opts.architecture
-  local resolved = nil
-  local err = nil
-  if architecture == nil then
-    resolved, err = _resolve_analysis(opts)
-    if resolved == nil then
-      return nil, err
-    end
-    architecture = resolved.architecture
-  end
   local out_path = opts.out_path and fs.resolve_path(fs.current_dir(), opts.out_path) or nil
   if out_path == nil then
     return nil, _text(
@@ -104,13 +106,31 @@ function service.write_scan(opts)
       "scan command requires an output file path"
     )
   end
-  local ok, parent_err = fs.ensure_parent_dir(out_path)
-  if not ok then
-    return nil, parent_err
-  end
-  local write_ok, write_err = _write_file(out_path, json_writer.encode(architecture))
-  if not write_ok then
-    return nil, write_err
+
+  local architecture = opts.architecture
+  local resolved = nil
+  local err = nil
+  if architecture == nil then
+    resolved, err = _resolve_context(opts)
+    if resolved == nil then
+      return nil, err
+    end
+    local fast_architecture, used_engine, extra = engine.write_json(resolved, out_path)
+    if used_engine ~= "go" and used_engine ~= "lua" then
+      return nil, used_engine
+    end
+    resolved.engine_used = used_engine
+    resolved.engine_binary = extra
+    architecture = fast_architecture
+  else
+    local ok, parent_err = fs.ensure_parent_dir(out_path)
+    if not ok then
+      return nil, parent_err
+    end
+    local write_ok, write_err = _write_file(out_path, json_writer.encode(architecture))
+    if not write_ok then
+      return nil, write_err
+    end
   end
   local project_root = opts.project_root and fs.resolve_path(fs.current_dir(), opts.project_root) or nil
   if project_root == nil and resolved ~= nil then
@@ -128,23 +148,9 @@ end
 function service.export_viewer(opts)
   opts = opts or {}
   local architecture = opts.architecture
+  local architecture_json_text = nil
   local resolved = nil
   local err = nil
-
-  if architecture == nil and opts.in_json ~= nil then
-    architecture, err = _load_architecture_json(fs.resolve_path(fs.current_dir(), opts.in_json))
-    if architecture == nil then
-      return nil, err
-    end
-  end
-
-  if architecture == nil then
-    resolved, err = _resolve_analysis(opts)
-    if resolved == nil then
-      return nil, err
-    end
-    architecture = resolved.architecture
-  end
 
   local project_root = opts.project_root
   if project_root == nil then
@@ -173,14 +179,47 @@ function service.export_viewer(opts)
   end
 
   local arch_json_path = fs.join_path(out_dir, "architecture.json")
-  local write_ok, write_err = _write_file(arch_json_path, json_writer.encode(architecture))
-  if not write_ok then
-    return nil, write_err
+
+  if architecture ~= nil then
+    architecture_json_text = json_writer.encode(architecture)
+    local write_ok, write_err = _write_file(arch_json_path, architecture_json_text)
+    if not write_ok then
+      return nil, write_err
+    end
+  elseif opts.in_json ~= nil then
+    architecture_json_text, err = _read_architecture_json_text(fs.resolve_path(fs.current_dir(), opts.in_json))
+    if architecture_json_text == nil then
+      return nil, err
+    end
+    local write_ok, write_err = _write_file(arch_json_path, architecture_json_text)
+    if not write_ok then
+      return nil, write_err
+    end
+  else
+    resolved, err = _resolve_context(opts)
+    if resolved == nil then
+      return nil, err
+    end
+    local fast_architecture, used_engine, extra = engine.write_json(resolved, arch_json_path)
+    if used_engine ~= "go" and used_engine ~= "lua" then
+      return nil, used_engine
+    end
+    resolved.engine_used = used_engine
+    resolved.engine_binary = extra
+    architecture = fast_architecture
+    if architecture ~= nil then
+      architecture_json_text = json_writer.encode(architecture)
+    else
+      architecture_json_text, err = _read_architecture_json_text(arch_json_path)
+      if architecture_json_text == nil then
+        return nil, err
+      end
+    end
   end
 
   local payload_ok, payload_err = _write_file(
     fs.join_path(out_dir, "architecture_data.js"),
-    "window.ARCH_VIEW_DATA = " .. json_writer.encode(architecture) .. ";\n"
+    "window.ARCH_VIEW_DATA = " .. architecture_json_text .. ";\n"
   )
   if not payload_ok then
     return nil, payload_err
