@@ -2,6 +2,8 @@ local common = require("arch_view.common")
 local layers = require("arch_view.layers")
 local layout_renderer = require("arch_view.layout_renderer")
 
+-- DEPRECATED: This Lua module is deprecated. Use the Go core engine via arch_view.app.go_bridge or arch_view.app.service instead.
+
 local projection = {}
 
 local function _node_child_name(node_id)

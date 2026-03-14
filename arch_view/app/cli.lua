@@ -11,9 +11,9 @@ end
 
 local function _usage()
   io.write(_text("用法", "Usage") .. ":\n")
-  io.write("  lua bin/arch_view.lua scan --out <file> [--project-root <dir>] [--config <file>] [--engine <auto|go|lua>]\n")
-  io.write("  lua bin/arch_view.lua check [--project-root <dir>] [--config <file>] [--engine <auto|go|lua>]\n")
-  io.write("  lua bin/arch_view.lua viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--engine <auto|go|lua>] [--open]\n")
+  io.write("  lua bin/arch_view.lua scan --out <file> [--project-root <dir>] [--config <file>]\n")
+  io.write("  lua bin/arch_view.lua check [--project-root <dir>] [--config <file>]\n")
+  io.write("  lua bin/arch_view.lua viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--open]\n")
   io.write("  lua bin/arch_view.lua\n")
 end
 

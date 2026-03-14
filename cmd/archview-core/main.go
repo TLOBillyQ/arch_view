@@ -19,6 +19,8 @@ func main() {
 		runAnalyze(os.Args[2:])
 	case "check":
 		runCheck(os.Args[2:])
+	case "export-viewer":
+		runExportViewer(os.Args[2:])
 	default:
 		fail("unknown command: " + os.Args[1])
 	}
@@ -132,4 +134,120 @@ func writeArchitecture(file *os.File, architecture *archcore.Architecture, forma
 	encoder := json.NewEncoder(file)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(architecture)
+}
+
+func runExportViewer(args []string) {
+	fs := flag.NewFlagSet("export-viewer", flag.ExitOnError)
+	requestPath := fs.String("request", "", "request file")
+	projectRoot := fs.String("project-root", "", "project root")
+	configPath := fs.String("config", "", "config file")
+	outDir := fs.String("out-dir", "", "output directory")
+	assetRoot := fs.String("asset-root", "", "viewer asset root directory")
+	_ = fs.Parse(args)
+
+	if *outDir == "" {
+		fail("missing --out-dir")
+	}
+
+	if *assetRoot == "" {
+		fail("missing --asset-root")
+	}
+
+	request := mustLoadRequest(*requestPath, *projectRoot, *configPath)
+	architecture, err := archcore.Analyze(request)
+	if err != nil {
+		fail(err.Error())
+	}
+
+	mustMkdir(*outDir)
+
+	if err := copyViewerAssets(*assetRoot, *outDir); err != nil {
+		fail(err.Error())
+	}
+
+	archJsonPath := filepath.Join(*outDir, "architecture.json")
+	if err := writeArchitectureFile(archJsonPath, architecture); err != nil {
+		fail(err.Error())
+	}
+
+	archDataJsPath := filepath.Join(*outDir, "architecture_data.js")
+	if err := writeArchitectureDataJs(archDataJsPath, architecture); err != nil {
+		fail(err.Error())
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	encoder.Encode(map[string]string{
+		"out_dir":     *outDir,
+		"index_path":  filepath.Join(*outDir, "index.html"),
+		"asset_root":  *assetRoot,
+		"project_root": request.ProjectRoot,
+	})
+}
+
+func copyViewerAssets(assetRoot, outDir string) error {
+	files := []string{"index.html", "script.js", "styles.css"}
+	for _, name := range files {
+		src := filepath.Join(assetRoot, name)
+		dst := filepath.Join(outDir, name)
+		if err := copyFile(src, dst); err != nil {
+			return fmt.Errorf("failed to copy %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = dstFile.ReadFrom(srcFile)
+	return err
+}
+
+func writeArchitectureFile(path string, architecture *archcore.Architecture) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(architecture)
+}
+
+func writeArchitectureDataJs(path string, architecture *archcore.Architecture) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+
+	if _, err := file.WriteString("window.ARCH_VIEW_DATA = "); err != nil {
+		return err
+	}
+	if err := encoder.Encode(architecture); err != nil {
+		return err
+	}
+	_, err = file.WriteString(";\n")
+	return err
 }

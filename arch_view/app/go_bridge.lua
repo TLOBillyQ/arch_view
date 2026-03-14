@@ -380,4 +380,61 @@ function go_bridge.check(request, opts)
   return decoded, binary_path
 end
 
+function go_bridge.export_viewer(request, out_dir, asset_root, opts)
+  opts = opts or {}
+  local binary_path, err = go_bridge.ensure_binary(request.project_root, opts)
+  if binary_path == nil then
+    return nil, err
+  end
+
+  local resolved_out_dir = fs.resolve_path(fs.current_dir(), out_dir)
+  local resolved_asset_root = fs.resolve_path(fs.current_dir(), asset_root)
+
+  local cmd = {
+    binary_path,
+    "export-viewer",
+    "--out-dir",
+    resolved_out_dir,
+    "--asset-root",
+    resolved_asset_root,
+  }
+
+  local request_path = nil
+  if _direct_config_available(request) then
+    table.insert(cmd, "--project-root")
+    table.insert(cmd, request.project_root)
+    table.insert(cmd, "--config")
+    table.insert(cmd, request.config_path)
+  else
+    request_path = fs.make_temp_path("archview_request", ".json")
+    local write_ok, write_err = fs.write_file(request_path, json_writer.encode(request))
+    if not write_ok then
+      return nil, write_err
+    end
+    table.insert(cmd, "--request")
+    table.insert(cmd, request_path)
+  end
+
+  local result = fs.run_command(cmd, {
+    cwd = request.project_root,
+  })
+
+  if request_path ~= nil then
+    fs.remove_path(request_path)
+  end
+
+  if not result.ok then
+    return nil, _text(
+      "Go 分析引擎导出 viewer 失败:\n" .. tostring(result.output),
+      "Go analysis engine export viewer failed:\n" .. tostring(result.output)
+    )
+  end
+
+  local ok, decoded = pcall(json_reader.decode, result.output)
+  if not ok then
+    return nil, decoded
+  end
+  return decoded, binary_path
+end
+
 return go_bridge

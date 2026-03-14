@@ -1,5 +1,7 @@
 local common = require("arch_view.common")
 
+-- DEPRECATED: This Lua module is deprecated. Use the Go core engine via arch_view.app.go_bridge or arch_view.app.service instead.
+
 local layers = {}
 
 local function _nodes_to_set(nodes)
