@@ -256,6 +256,10 @@ function common.path_exists(path)
   return script_common.path_exists(path)
 end
 
+function common.path_mtime(path)
+  return script_common.path_mtime(path)
+end
+
 function common.remove_path(path)
   return script_common.remove_path(path)
 end
@@ -266,6 +270,10 @@ end
 
 function common.run_command(command, options)
   return script_common.run_command(command, options)
+end
+
+function common.make_temp_path(prefix, suffix)
+  return script_common.make_temp_path(prefix, suffix)
 end
 
 function common.command_exists(name)

@@ -42,12 +42,32 @@ function fs.path_exists(path)
   return common.path_exists(path)
 end
 
+function fs.path_mtime(path)
+  return common.path_mtime(path)
+end
+
+function fs.remove_path(path)
+  return common.remove_path(path)
+end
+
 function fs.open_path(path)
   return common.open_path(path)
 end
 
 function fs.copy_tree(source_path, target_path)
   return common.copy_tree(source_path, target_path)
+end
+
+function fs.collect_files(root, extension)
+  return common.collect_files(root, extension)
+end
+
+function fs.run_command(command, options)
+  return common.run_command(command, options)
+end
+
+function fs.make_temp_path(prefix, suffix)
+  return common.make_temp_path(prefix, suffix)
 end
 
 return fs

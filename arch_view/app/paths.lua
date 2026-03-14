@@ -15,4 +15,8 @@ function paths.default_viewer_out_dir(project_root)
   return fs.join_path(project_root, ".arch_view/viewer")
 end
 
+function paths.default_toolchain_root(project_root)
+  return fs.join_path(project_root, ".arch_view/toolchain")
+end
+
 return paths

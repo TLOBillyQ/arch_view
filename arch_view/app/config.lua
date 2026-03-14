@@ -1,6 +1,7 @@
 local build = require("arch_view.build")
 local common = require("arch_view.common")
 local fs = require("arch_view.support.fs")
+local json_reader = require("arch_view.json_reader")
 
 local config = {}
 
@@ -9,15 +10,21 @@ local function _text(zh, en)
 end
 
 function config.default_path(project_root)
-  return fs.join_path(project_root, "arch_view.config.lua")
+  return fs.join_path(project_root, "arch_view.config.json")
 end
 
 function config.load(path)
-  local chunk, err = loadfile(path)
-  if not chunk then
+  local content, err = fs.read_file(path)
+  if content == nil then
     return nil, err
   end
-  local loaded = chunk()
+  local ok, loaded = pcall(json_reader.decode, content)
+  if not ok then
+    return nil, _text(
+      "架构配置不是有效 JSON: " .. tostring(path),
+      "Architecture config is not valid JSON: " .. tostring(path)
+    )
+  end
   if type(loaded) ~= "table" then
     return nil, _text(
       "架构配置无效: " .. tostring(path),

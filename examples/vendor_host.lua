@@ -8,7 +8,7 @@ local arch_view = require("arch_view")
 
 local architecture, err = arch_view.analyze({
   project_root = ".",
-  config_path = "arch_view.config.lua",
+  config_path = "arch_view.config.json",
 })
 
 if architecture == nil then

@@ -736,6 +736,39 @@ function common.path_exists(path)
   return _os_execute_success(ok, kind, code)
 end
 
+function common.path_mtime(path)
+  local normalized = common.normalize_path(path)
+  if not common.path_exists(normalized) then
+    return nil
+  end
+
+  if not common.is_windows() then
+    local command = nil
+    if common.is_macos() then
+      command = { "stat", "-f", "%m", normalized }
+    else
+      command = { "stat", "-c", "%Y", normalized }
+    end
+    local result = common.run_command(command)
+    if not result.ok then
+      return nil
+    end
+    return common.to_integer((result.output or ""):match("^%s*(.-)%s*$"))
+  end
+
+  local script = table.concat({
+    "$path = " .. _powershell_literal(_windows_path(normalized)),
+    "$item = Get-Item -LiteralPath $path",
+    "$epoch = [DateTimeOffset]::new($item.LastWriteTimeUtc).ToUnixTimeSeconds()",
+    "Write-Output $epoch",
+  }, "\n")
+  local result = common.run_command(_windows_powershell_command(script))
+  if not result.ok then
+    return nil
+  end
+  return common.to_integer((result.output or ""):match("^%s*(.-)%s*$"))
+end
+
 function common.is_dir(path)
   local normalized = common.normalize_path(path)
   if not common.is_windows() then

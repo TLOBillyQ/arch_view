@@ -11,9 +11,9 @@ end
 
 local function _usage()
   io.write(_text("用法", "Usage") .. ":\n")
-  io.write("  lua bin/arch_view.lua scan --out <file> [--project-root <dir>] [--config <file>]\n")
-  io.write("  lua bin/arch_view.lua check [--project-root <dir>] [--config <file>]\n")
-  io.write("  lua bin/arch_view.lua viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--open]\n")
+  io.write("  lua bin/arch_view.lua scan --out <file> [--project-root <dir>] [--config <file>] [--engine <auto|go|lua>]\n")
+  io.write("  lua bin/arch_view.lua check [--project-root <dir>] [--config <file>] [--engine <auto|go|lua>]\n")
+  io.write("  lua bin/arch_view.lua viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--engine <auto|go|lua>] [--open]\n")
   io.write("  lua bin/arch_view.lua\n")
 end
 
@@ -26,6 +26,7 @@ local function _parse_args(args)
     out_dir = nil,
     in_json = nil,
     open = false,
+    engine = "auto",
   }
   local index = 2
   while index <= #args do
@@ -48,6 +49,9 @@ local function _parse_args(args)
     elseif token == "--open" then
       options.open = true
       index = index + 1
+    elseif token == "--engine" then
+      options.engine = args[index + 1]
+      index = index + 2
     else
       error(_text(
         "未知参数: " .. tostring(token),
@@ -71,22 +75,25 @@ local function _normalize_options(parsed, opts)
     out_dir = parsed.out_dir and fs.resolve_path(cwd, parsed.out_dir) or nil,
     in_json = parsed.in_json and fs.resolve_path(cwd, parsed.in_json) or nil,
     open = parsed.open,
+    engine = parsed.engine or opts.default_engine or "auto",
     asset_root = opts.asset_root and fs.resolve_path(cwd, opts.asset_root) or paths.default_asset_root(),
     open_path = opts.open_path,
+    toolchain_root = opts.toolchain_root and fs.resolve_path(cwd, opts.toolchain_root) or nil,
   }
 end
 
 local function _run_check(options)
-  local architecture, err = service.analyze(options)
-  if architecture == nil then
+  local result, err = service.check(options)
+  if result == nil then
     error(err)
   end
-  if architecture.check and architecture.check.ok then
+  local check = result.check or {}
+  if check.ok then
     print(_text("arch_view 检查通过", "arch_view check ok"))
     return true
   end
   io.stderr:write(_text("arch_view 检查失败", "arch_view check failed"), "\n")
-  for _, violation in ipairs((architecture.check and architecture.check.violations) or {}) do
+  for _, violation in ipairs(check.violations or {}) do
     if violation.kind == "forbidden_dependency" then
       io.stderr:write("  ", _text("禁止依赖", "forbidden_dependency"), " [", tostring(violation.rule), "] ", tostring(violation.from), " -> ", tostring(violation.to), "\n")
       io.stderr:write("    ", tostring(violation.description), "\n")

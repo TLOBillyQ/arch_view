@@ -45,6 +45,128 @@ local function _assert_not_contains(text, expected, message)
   end
 end
 
+local function _is_array(value)
+  if type(value) ~= "table" then
+    return false
+  end
+  local count = 0
+  for key in pairs(value) do
+    count = count + 1
+    if type(key) ~= "number" or key < 1 or key ~= math.floor(key) then
+      return false
+    end
+  end
+  return count == #value
+end
+
+local function _semantic_equal(left, right)
+  if left == nil and right == false then
+    return true
+  end
+  if right == nil and left == false then
+    return true
+  end
+  if type(left) == "number" and type(right) == "number" then
+    return left == right
+  end
+  if type(left) ~= type(right) then
+    if left == nil and type(right) == "table" and next(right) == nil then
+      return true
+    end
+    if right == nil and type(left) == "table" and next(left) == nil then
+      return true
+    end
+    return false
+  end
+  if type(left) ~= "table" then
+    return left == right
+  end
+  if _is_array(left) or _is_array(right) then
+    if #left ~= #right then
+      return false
+    end
+    for index = 1, #left do
+      if not _semantic_equal(left[index], right[index]) then
+        return false
+      end
+    end
+    return true
+  end
+  local visited = {}
+  for key in pairs(left) do
+    visited[key] = true
+    if not _semantic_equal(left[key], right[key]) then
+      return false
+    end
+  end
+  for key in pairs(right) do
+    if not visited[key] then
+      if not _semantic_equal(left[key], right[key]) then
+        return false
+      end
+    end
+  end
+  return true
+end
+
+local function _assert_semantic_eq(actual, expected, message)
+  if not _semantic_equal(actual, expected) then
+    error((message or "values differ") .. "\nexpected: " .. json_writer.encode(expected) .. "\nactual: " .. json_writer.encode(actual))
+  end
+end
+
+local function _normalize_architecture(architecture)
+  local copied = json_reader.decode(json_writer.encode(architecture))
+  copied.project_root = nil
+  copied.config_path = nil
+  return copied
+end
+
+local function _view_signature(view)
+  local nodes = {}
+  for _, node in ipairs(view.nodes or {}) do
+    nodes[#nodes + 1] = {
+      id = node.id,
+      full_name = node.full_name,
+      display_label = node.display_label,
+      leaf = node.leaf,
+      drillable = node.drillable,
+      component = node.component,
+      abstract = node.abstract,
+      cycle = node.cycle,
+      has_cycle_subtree = node.has_cycle_subtree,
+      module_id = node.module_id,
+      view_key = node.view_key,
+      internal_requires = node.internal_requires or {},
+      external_requires = node.external_requires or {},
+      incoming_dependencies = node.incoming_dependencies or {},
+      outgoing_dependencies = node.outgoing_dependencies or {},
+    }
+  end
+  local edges = {}
+  for _, edge in ipairs(view.display_edges or {}) do
+    edges[#edges + 1] = {
+      from = edge.from,
+      to = edge.to,
+      type = edge.type,
+      route_points = edge.route_points or {},
+      module_edges = edge.module_edges or {},
+      feedback = edge.feedback == true,
+      cycle = edge.cycle == true,
+    }
+  end
+  return {
+    key = view.key,
+    label = view.label,
+    title = view.title,
+    breadcrumb = view.breadcrumb or {},
+    layers = view.layers or {},
+    nodes = nodes,
+    display_edges = edges,
+    indicators = view.indicators or {},
+  }
+end
+
 local function _exists(path)
   return common.path_exists(path) == true
 end
@@ -73,22 +195,19 @@ local function _write_file(path, text)
 end
 
 local function _write_sample_project(project_root)
-  local config_text = table.concat({
-    "return {",
-    '  source_roots = { "src" },',
-    "  component_rules = {",
-    '    { name = "demo", match = { "^src%.demo$", "^src%.demo%..+" }, component = "demo" },',
-    "  },",
-    "  abstract_rules = {},",
-    "  forbidden_dependency_rules = {},",
-    "}",
-    "",
-  }, "\n")
+  local config_payload = {
+    source_roots = { "src" },
+    component_rules = {
+      { name = "demo", match = { "^src%.demo$", "^src%.demo%..+" }, component = "demo" },
+    },
+    abstract_rules = {},
+    forbidden_dependency_rules = {},
+  }
   _write_file(common.join_path(project_root, "src/demo/pkg/init.lua"), 'local beta = require("src.demo.beta")\nreturn beta\n')
   _write_file(common.join_path(project_root, "src/demo/pkg/child.lua"), "return {}\n")
   _write_file(common.join_path(project_root, "src/demo/beta.lua"), "return {}\n")
-  _write_file(common.join_path(project_root, "arch_config.lua"), config_text)
-  _write_file(common.join_path(project_root, "arch_view.config.lua"), config_text)
+  _write_file(common.join_path(project_root, "arch_config.json"), json_writer.encode(config_payload))
+  _write_file(common.join_path(project_root, "arch_view.config.json"), json_writer.encode(config_payload))
 end
 
 local function _test_dependency_extract_supports_static_requires()
@@ -338,12 +457,12 @@ local function _test_build_and_cli_respect_default_config_path()
   _with_clean_tmp(function()
     local project_root = common.join_path(tmp_root, "build_project")
     _write_sample_project(project_root)
-    local config_path = common.join_path(project_root, "arch_config.lua")
+    local config_path = common.join_path(project_root, "arch_config.json")
     local out_path = common.join_path(project_root, "out/architecture.json")
     local out_dir = common.join_path(project_root, "viewer")
 
-    local config_chunk = assert(loadfile(config_path))
-    local architecture, err = build.analyze(config_chunk(), {
+    local config_payload = json_reader.decode(_read_file(config_path))
+    local architecture, err = build.analyze(config_payload, {
       project_root = project_root,
       config_path = config_path,
     })
@@ -472,6 +591,77 @@ local function _test_viewer_export_is_self_contained_and_generic()
   end)
 end
 
+local function _test_go_engine_matches_lua_engine_output()
+  _with_clean_tmp(function()
+    local project_root = common.join_path(tmp_root, "go_compare_project")
+    _write_sample_project(project_root)
+
+    local lua_architecture, lua_err = arch_view.analyze({
+      project_root = project_root,
+      engine = "lua",
+    })
+    if lua_architecture == nil then
+      error(lua_err)
+    end
+
+    local go_architecture, go_err = arch_view.analyze({
+      project_root = project_root,
+      engine = "go",
+    })
+    if go_architecture == nil then
+      error(go_err)
+    end
+
+    local normalized_go = _normalize_architecture(go_architecture)
+    local normalized_lua = _normalize_architecture(lua_architecture)
+
+    _assert_eq(json_writer.encode(normalized_go.graph), json_writer.encode(normalized_lua.graph), "go graph should match lua graph")
+    _assert_eq(json_writer.encode(normalized_go.modules), json_writer.encode(normalized_lua.modules), "go modules should match lua modules")
+    _assert_eq(json_writer.encode(normalized_go.layout), json_writer.encode(normalized_lua.layout), "go layout should match lua layout")
+    _assert_eq(json_writer.encode(normalized_go.classified_edges), json_writer.encode(normalized_lua.classified_edges), "go classified_edges should match lua classified_edges")
+    _assert_eq(json_writer.encode(normalized_go.projection_cycles), json_writer.encode(normalized_lua.projection_cycles), "go projection_cycles should match lua projection_cycles")
+    _assert_eq(json_writer.encode(normalized_go.check), json_writer.encode(normalized_lua.check), "go check should match lua check")
+    _assert_eq(json_writer.encode(common.sorted_keys(normalized_go.views or {})), json_writer.encode(common.sorted_keys(normalized_lua.views or {})), "go view keys should match lua view keys")
+
+    for _, view_key in ipairs(common.sorted_keys(normalized_lua.views or {})) do
+      _assert_semantic_eq(
+        _view_signature(normalized_go.views[view_key]),
+        _view_signature(normalized_lua.views[view_key]),
+        "go view should match lua view: " .. tostring(view_key)
+      )
+    end
+  end)
+end
+
+local function _test_auto_engine_builds_toolchain_binary()
+  _with_clean_tmp(function()
+    local project_root = common.join_path(tmp_root, "go_auto_project")
+    _write_sample_project(project_root)
+
+    local architecture, err = arch_view.analyze({
+      project_root = project_root,
+      engine = "auto",
+    })
+    if architecture == nil then
+      error(err)
+    end
+
+    local toolchain_root = common.join_path(project_root, ".arch_view/toolchain")
+    local files, collect_err = common.collect_files(toolchain_root, "")
+    if not files then
+      error(collect_err)
+    end
+    local found = false
+    for _, path in ipairs(files or {}) do
+      if path:match("archview%-core") ~= nil then
+        found = true
+        break
+      end
+    end
+    assert(found == true, "auto engine should build archview-core binary under .arch_view/toolchain")
+  end)
+end
+
 local function _test_tool_is_self_contained()
   local common_source = _read_file(common.join_path(repo_root, "arch_view/common.lua"))
   local script_common_source = _read_file(common.join_path(repo_root, "arch_view/script_common.lua"))
@@ -492,6 +682,8 @@ return {
     { name = "public_api_uses_default_config_and_exports_viewer", run = _test_public_api_uses_default_config_and_exports_viewer },
     { name = "bin_entrypoint_runs_standalone", run = _test_bin_entrypoint_runs_standalone },
     { name = "viewer_export_is_self_contained_and_generic", run = _test_viewer_export_is_self_contained_and_generic },
+    { name = "go_engine_matches_lua_engine_output", run = _test_go_engine_matches_lua_engine_output },
+    { name = "auto_engine_builds_toolchain_binary", run = _test_auto_engine_builds_toolchain_binary },
     { name = "tool_is_self_contained", run = _test_tool_is_self_contained },
   },
 }

@@ -1,7 +1,7 @@
-local build = require("arch_view.build")
-local common = require("arch_view.common")
 local config_loader = require("arch_view.app.config")
+local engine = require("arch_view.app.engine")
 local paths = require("arch_view.app.paths")
+local common = require("arch_view.common")
 local fs = require("arch_view.support.fs")
 local json_reader = require("arch_view.json_reader")
 local json_writer = require("arch_view.json_writer")
@@ -34,15 +34,18 @@ local function _resolve_analysis(opts)
     return nil, err
   end
 
-  local architecture, analyze_err = build.analyze(resolved.config, {
-    project_root = resolved.project_root,
-    config_path = resolved.config_path,
-  })
+  resolved.engine = opts.engine or "auto"
+  resolved.package_root = opts.package_root or paths.package_root()
+  resolved.toolchain_root = opts.toolchain_root and fs.resolve_path(fs.current_dir(), opts.toolchain_root) or nil
+
+  local architecture, used_engine, extra = engine.analyze(resolved)
   if architecture == nil then
-    return nil, analyze_err
+    return nil, used_engine
   end
 
   resolved.architecture = architecture
+  resolved.engine_used = used_engine
+  resolved.engine_binary = extra
   return resolved
 end
 
@@ -56,6 +59,30 @@ function service.analyze(opts)
     return nil, err
   end
   return resolved.architecture
+end
+
+function service.check(opts)
+  opts = opts or {}
+  local resolved, err = config_loader.resolve(opts)
+  if resolved == nil then
+    return nil, err
+  end
+
+  resolved.engine = opts.engine or "auto"
+  resolved.package_root = opts.package_root or paths.package_root()
+  resolved.toolchain_root = opts.toolchain_root and fs.resolve_path(fs.current_dir(), opts.toolchain_root) or nil
+
+  local check_result, used_engine = engine.check(resolved)
+  if check_result == nil then
+    return nil, used_engine
+  end
+
+  return {
+    check = check_result,
+    engine = used_engine,
+    project_root = resolved.project_root,
+    config_path = resolved.config_path,
+  }
 end
 
 function service.write_scan(opts)
@@ -94,6 +121,7 @@ function service.write_scan(opts)
     architecture = architecture,
     project_root = project_root,
     config_path = resolved and resolved.config_path or (opts.config_path and fs.resolve_path(fs.current_dir(), opts.config_path) or nil),
+    engine = resolved and resolved.engine_used or opts.engine or "lua",
   }
 end
 
@@ -173,6 +201,7 @@ function service.export_viewer(opts)
     architecture = architecture,
     asset_root = asset_root,
     project_root = project_root,
+    engine = resolved and resolved.engine_used or opts.engine or "lua",
   }
 end
 
