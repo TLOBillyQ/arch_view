@@ -66,35 +66,27 @@ local function _parse_integer_string(value)
 end
 
 
-local _random_seeded = false
 local _temp_counter = 0
 local _base64_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 local function _entropy_token()
-  local pointer = tostring({}):match("0x(%x+)") or "ptr"
-  local micros = math.floor((os.clock() or 0) * 1000000)
-  return tostring(micros) .. "_" .. tostring(pointer)
-end
-
-local function _seed_random_once()
-  if _random_seeded then
-    return
+  local pointer = tostring({}):gsub("[^%w]+", "")
+  if pointer == "" then
+    pointer = "ptr"
   end
-  local pointer = tostring({}):match("0x(%x+)") or "0"
-  local numeric_pointer = tonumber(pointer, 16) or 0
-  local seed = os.time() + math.floor((os.clock() or 0) * 1000000) + (numeric_pointer % 1000000)
-  math.randomseed(seed)
-  math.random()
-  math.random()
-  math.random()
-  _random_seeded = true
+  _temp_counter = _temp_counter + 1
+  return table.concat({
+    tostring(os.time()),
+    tostring(_temp_counter),
+    pointer,
+  }, "_")
 end
 
 local function _os_execute_success(ok, _, code)
-  if ok == true then
+  if ok == true and (code == nil or (_to_integer_safe(code) ~= nil and code == 0)) then
     return true, code or 0
   end
-  if common.is_numeric(code) and code == 0 then
+  if _to_integer_safe(code) ~= nil and code == 0 then
     return true, 0
   end
   return false, code or 1
@@ -219,6 +211,40 @@ end
 
 local function _windows_path(path)
   return tostring(path or ""):gsub("/", "\\")
+end
+
+local function _windows_copy_bytes(source_path, target_path, opts)
+  local mode = opts and opts.mode or "write"
+  local script = {
+    "$source = " .. _powershell_literal(_windows_path(source_path)),
+    "$target = " .. _powershell_literal(_windows_path(target_path)),
+    "$parent = [System.IO.Path]::GetDirectoryName($target)",
+    "try {",
+    "  if ($parent -and $parent -ne '') {",
+    "    [System.IO.Directory]::CreateDirectory($parent) | Out-Null",
+    "  }",
+    "  $bytes = [System.IO.File]::ReadAllBytes($source)",
+  }
+
+  if mode == "append" then
+    script[#script + 1] = "  $stream = [System.IO.File]::Open($target, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)"
+    script[#script + 1] = "  try {"
+    script[#script + 1] = "    [void]$stream.Seek(0, [System.IO.SeekOrigin]::End)"
+    script[#script + 1] = "    $stream.Write($bytes, 0, $bytes.Length)"
+    script[#script + 1] = "  } finally {"
+    script[#script + 1] = "    $stream.Dispose()"
+    script[#script + 1] = "  }"
+  else
+    script[#script + 1] = "  [System.IO.File]::WriteAllBytes($target, $bytes)"
+  end
+
+  script[#script + 1] = "  exit 0"
+  script[#script + 1] = "} catch {"
+  script[#script + 1] = "  [Console]::Error.WriteLine($_.Exception.Message)"
+  script[#script + 1] = "  exit 1"
+  script[#script + 1] = "}"
+
+  return _windows_execute_powershell(table.concat(script, "\n"))
 end
 
 local function _windows_process_quote(value)
@@ -604,16 +630,11 @@ function common.build_open_command(path)
 end
 
 function common.make_temp_path(prefix, suffix)
-  _seed_random_once()
-  _temp_counter = _temp_counter + 1
   local base_dir = common.join_path(common.system_tmp_dir(), "monopoly_script_tools")
   common.ensure_dir(base_dir)
   local name = table.concat({
     tostring(prefix or "tmp"),
-    tostring(os.time()),
     _entropy_token(),
-    tostring(_temp_counter),
-    tostring(math.random(100000, 999999)),
   }, "_")
   return common.join_path(base_dir, name .. tostring(suffix or ""))
 end
@@ -652,17 +673,7 @@ function common.read_file(path)
   end
 
   local output_path = common.make_temp_path("read_file", ".txt")
-  local script = table.concat({
-    "$path = " .. _powershell_literal(_windows_path(normalized)),
-    "$out = " .. _powershell_literal(_windows_path(output_path)),
-    "try {",
-    "  [System.IO.File]::WriteAllBytes($out, [System.IO.File]::ReadAllBytes($path))",
-    "  exit 0",
-    "} catch {",
-    "  exit 1",
-    "}",
-  }, "\n")
-  local ok, kind, code = _windows_execute_powershell(script)
+  local ok, kind, code = _windows_copy_bytes(normalized, output_path, { mode = "write" })
   local success = _os_execute_success(ok, kind, code)
   if not success then
     common.remove_path(output_path)
@@ -753,17 +764,7 @@ function common.write_file(path, content)
     )
   end
 
-  local script = table.concat({
-    "$source = " .. _powershell_literal(_windows_path(temp_path)),
-    "$target = " .. _powershell_literal(_windows_path(normalized)),
-    "try {",
-    "  [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($source))",
-    "  exit 0",
-    "} catch {",
-    "  exit 1",
-    "}",
-  }, "\n")
-  local exec_ok, kind, code = _windows_execute_powershell(script)
+  local exec_ok, kind, code = _windows_copy_bytes(temp_path, normalized, { mode = "write" })
   common.remove_path(temp_path)
   local success = _os_execute_success(exec_ok, kind, code)
   if not success then
@@ -802,23 +803,7 @@ function common.append_file(path, content)
     )
   end
 
-  local script = table.concat({
-    "$source = " .. _powershell_literal(_windows_path(temp_path)),
-    "$target = " .. _powershell_literal(_windows_path(normalized)),
-    "try {",
-    "  $bytes = [System.IO.File]::ReadAllBytes($source)",
-    "  $stream = [System.IO.File]::Open($target, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)",
-    "  try {",
-    "    $stream.Write($bytes, 0, $bytes.Length)",
-    "  } finally {",
-    "    $stream.Dispose()",
-    "  }",
-    "  exit 0",
-    "} catch {",
-    "  exit 1",
-    "}",
-  }, "\n")
-  local exec_ok, kind, code = _windows_execute_powershell(script)
+  local exec_ok, kind, code = _windows_copy_bytes(temp_path, normalized, { mode = "append" })
   common.remove_path(temp_path)
   local success = _os_execute_success(exec_ok, kind, code)
   if not success then
@@ -1044,41 +1029,38 @@ function common.run_command(command, options)
       end
     end
 
-    local script = table.concat({
+    local script_lines = {
       "$exe = " .. _powershell_literal(_windows_path(resolved_args[1])),
       "$out = " .. _powershell_literal(_windows_path(output_path)),
       "$cwd = " .. _powershell_literal(_windows_path(cwd_path or common.current_dir())),
       "$stdin = " .. _powershell_literal(_windows_path(stdin_path or "")),
-      "$argText = " .. _powershell_literal(_windows_argument_text(resolved_args)),
-      "try {",
-      "  $psi = New-Object System.Diagnostics.ProcessStartInfo",
-      "  $psi.FileName = $exe",
-      "  $psi.Arguments = $argText",
-      "  $psi.WorkingDirectory = $cwd",
-      "  $psi.UseShellExecute = $false",
-      "  $psi.RedirectStandardOutput = $true",
-      "  $psi.RedirectStandardError = $true",
-      "  if ($stdin -ne '') {",
-      "    $psi.RedirectStandardInput = $true",
-      "  }",
-      "  $process = New-Object System.Diagnostics.Process",
-      "  $process.StartInfo = $psi",
-      "  [void]$process.Start()",
-      "  if ($stdin -ne '') {",
-      "    $content = [System.IO.File]::ReadAllText($stdin, [System.Text.UTF8Encoding]::new($false))",
-      "    $process.StandardInput.Write($content)",
-      "    $process.StandardInput.Close()",
-      "  }",
-      "  $stdout = $process.StandardOutput.ReadToEnd()",
-      "  $stderr = $process.StandardError.ReadToEnd()",
-      "  $process.WaitForExit()",
-      "  [System.IO.File]::WriteAllText($out, $stdout + $stderr, [System.Text.UTF8Encoding]::new($false))",
-      "  exit $process.ExitCode",
-      "} catch {",
-      "  [System.IO.File]::WriteAllText($out, $_.Exception.ToString(), [System.Text.UTF8Encoding]::new($false))",
-      "  exit 1",
-      "}",
-    }, "\n")
+      "$argList = New-Object System.Collections.Generic.List[string]",
+    }
+    for index = 2, #resolved_args do
+      script_lines[#script_lines + 1] = "$argList.Add(" .. _powershell_literal(tostring(resolved_args[index])) .. ") | Out-Null"
+    end
+    script_lines[#script_lines + 1] = "$pushed = $false"
+    script_lines[#script_lines + 1] = "try {"
+    script_lines[#script_lines + 1] = "  Push-Location -LiteralPath $cwd"
+    script_lines[#script_lines + 1] = "  $pushed = $true"
+    script_lines[#script_lines + 1] = "  if ($stdin -ne '') {"
+    script_lines[#script_lines + 1] = "    $content = [System.IO.File]::ReadAllText($stdin, [System.Text.UTF8Encoding]::new($false))"
+    script_lines[#script_lines + 1] = "    $output = $content | & $exe @($argList.ToArray()) 2>&1 | Out-String"
+    script_lines[#script_lines + 1] = "  } else {"
+    script_lines[#script_lines + 1] = "    $output = & $exe @($argList.ToArray()) 2>&1 | Out-String"
+    script_lines[#script_lines + 1] = "  }"
+    script_lines[#script_lines + 1] = "  $exitCode = if ($LASTEXITCODE -ne $null) { [int]$LASTEXITCODE } else { 0 }"
+    script_lines[#script_lines + 1] = "  [System.IO.File]::WriteAllText($out, $output, [System.Text.UTF8Encoding]::new($false))"
+    script_lines[#script_lines + 1] = "  exit $exitCode"
+    script_lines[#script_lines + 1] = "} catch {"
+    script_lines[#script_lines + 1] = "  [System.IO.File]::WriteAllText($out, $_.Exception.ToString(), [System.Text.UTF8Encoding]::new($false))"
+    script_lines[#script_lines + 1] = "  exit 1"
+    script_lines[#script_lines + 1] = "} finally {"
+    script_lines[#script_lines + 1] = "  if ($pushed) {"
+    script_lines[#script_lines + 1] = "    Pop-Location"
+    script_lines[#script_lines + 1] = "  }"
+    script_lines[#script_lines + 1] = "}"
+    local script = table.concat(script_lines, "\n")
     local ok, kind, code = _windows_execute_powershell(script)
     local success, exit_code = _os_execute_success(ok, kind, code)
     local output = _read_raw_file(output_path) or ""
