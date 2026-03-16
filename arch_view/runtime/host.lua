@@ -70,11 +70,20 @@ local _random_seeded = false
 local _temp_counter = 0
 local _base64_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
+local function _entropy_token()
+  local pointer = tostring({}):match("0x(%x+)") or "ptr"
+  local micros = math.floor((os.clock() or 0) * 1000000)
+  return tostring(micros) .. "_" .. tostring(pointer)
+end
+
 local function _seed_random_once()
   if _random_seeded then
     return
   end
-  math.randomseed(os.time())
+  local pointer = tostring({}):match("0x(%x+)") or "0"
+  local numeric_pointer = tonumber(pointer, 16) or 0
+  local seed = os.time() + math.floor((os.clock() or 0) * 1000000) + (numeric_pointer % 1000000)
+  math.randomseed(seed)
   math.random()
   math.random()
   math.random()
@@ -107,6 +116,15 @@ local function _write_raw_file(path, content, mode)
     return nil
   end
   file:write(content)
+  file:close()
+  return true
+end
+
+local function _raw_file_exists(path)
+  local file = io.open(path, "rb")
+  if file == nil then
+    return false
+  end
   file:close()
   return true
 end
@@ -151,18 +169,28 @@ end
 local function _utf16le_encode(text)
   local source = tostring(text or "")
   local parts = {}
+  local index = 1
 
-  for _, codepoint in utf8.codes(source) do
-    if codepoint <= 0xFFFF then
-      local low = codepoint % 256
-      local high = math.floor(codepoint / 256)
-      parts[#parts + 1] = string.char(low, high)
+  while index <= #source do
+    local ok, codepoint = pcall(utf8.codepoint, source, index)
+    if not ok or codepoint == nil then
+      local byte = source:byte(index) or 0
+      parts[#parts + 1] = string.char(byte, 0)
+      index = index + 1
     else
-      local value = codepoint - 0x10000
-      local high_surrogate = 0xD800 + math.floor(value / 0x400)
-      local low_surrogate = 0xDC00 + (value % 0x400)
-      parts[#parts + 1] = string.char(high_surrogate % 256, math.floor(high_surrogate / 256))
-      parts[#parts + 1] = string.char(low_surrogate % 256, math.floor(low_surrogate / 256))
+      local next_index = utf8.offset(source, 2, index) or (#source + 1)
+      if codepoint <= 0xFFFF then
+        local low = codepoint % 256
+        local high = math.floor(codepoint / 256)
+        parts[#parts + 1] = string.char(low, high)
+      else
+        local value = codepoint - 0x10000
+        local high_surrogate = 0xD800 + math.floor(value / 0x400)
+        local low_surrogate = 0xDC00 + (value % 0x400)
+        parts[#parts + 1] = string.char(high_surrogate % 256, math.floor(high_surrogate / 256))
+        parts[#parts + 1] = string.char(low_surrogate % 256, math.floor(low_surrogate / 256))
+      end
+      index = next_index
     end
   end
 
@@ -228,6 +256,80 @@ local function _windows_process_quote(value)
   parts[#parts + 1] = '"'
 
   return table.concat(parts)
+end
+
+local function _windows_argument_text(args)
+  local parts = {}
+  for index = 2, #(args or {}) do
+    parts[#parts + 1] = _windows_process_quote(args[index])
+  end
+  return table.concat(parts, " ")
+end
+
+local function _windows_known_command_dirs()
+  local dirs = {}
+
+  local function _push(path)
+    local normalized = common.normalize_path(path)
+    if normalized ~= "" then
+      dirs[#dirs + 1] = normalized
+    end
+  end
+
+  for entry in tostring(os.getenv("PATH") or ""):gmatch("[^;]+") do
+    _push(entry)
+  end
+
+  local program_files = os.getenv("ProgramFiles")
+  if program_files ~= nil and program_files ~= "" then
+    _push(program_files .. "/Go/bin")
+  end
+  local program_files_x86 = os.getenv("ProgramFiles(x86)")
+  if program_files_x86 ~= nil and program_files_x86 ~= "" then
+    _push(program_files_x86 .. "/Go/bin")
+  end
+  local user_profile = os.getenv("USERPROFILE")
+  if user_profile ~= nil and user_profile ~= "" then
+    _push(user_profile .. "/scoop/apps/go/current/bin")
+  end
+  _push("C:/Go/bin")
+
+  return dirs
+end
+
+local function _windows_resolve_command_path(name)
+  local command_name = tostring(name or "")
+  if command_name == "" then
+    return nil
+  end
+
+  if command_name:find("[/\\]") ~= nil or command_name:match("^%a:") ~= nil then
+    if _raw_file_exists(command_name) then
+      return common.normalize_path(command_name)
+    end
+    return nil
+  end
+
+  local candidates = {}
+  if command_name:match("%.[^./\\]+$") ~= nil then
+    candidates[1] = command_name
+  else
+    candidates[1] = command_name .. ".exe"
+    candidates[2] = command_name .. ".cmd"
+    candidates[3] = command_name .. ".bat"
+    candidates[4] = command_name
+  end
+
+  for _, dir in ipairs(_windows_known_command_dirs()) do
+    for _, candidate in ipairs(candidates) do
+      local full_path = common.join_path(dir, candidate)
+      if _raw_file_exists(full_path) then
+        return common.normalize_path(full_path)
+      end
+    end
+  end
+
+  return nil
 end
 
 function common.bilingual(zh, en)
@@ -476,11 +578,15 @@ end
 
 function common.build_command(args)
   local parts = {}
-  for _, value in ipairs(args or {}) do
+  for index, value in ipairs(args or {}) do
+    local resolved = value
     if common.is_windows() then
-      parts[#parts + 1] = _windows_process_quote(value)
+      if index == 1 then
+        resolved = _windows_path(_windows_resolve_command_path(value) or value)
+      end
+      parts[#parts + 1] = _windows_process_quote(resolved)
     else
-      parts[#parts + 1] = common.shell_quote(value)
+      parts[#parts + 1] = common.shell_quote(resolved)
     end
   end
   return table.concat(parts, " ")
@@ -505,6 +611,7 @@ function common.make_temp_path(prefix, suffix)
   local name = table.concat({
     tostring(prefix or "tmp"),
     tostring(os.time()),
+    _entropy_token(),
     tostring(_temp_counter),
     tostring(math.random(100000, 999999)),
   }, "_")
@@ -518,6 +625,9 @@ function common.command_exists(name)
   end
 
   if common.is_windows() then
+    if _windows_resolve_command_path(command_name) ~= nil then
+      return true
+    end
     local command = "where.exe " .. common.shell_quote(command_name) .. " >nul 2>nul"
     local ok, kind, code = os.execute(command)
     return _os_execute_success(ok, kind, code)
@@ -546,8 +656,7 @@ function common.read_file(path)
     "$path = " .. _powershell_literal(_windows_path(normalized)),
     "$out = " .. _powershell_literal(_windows_path(output_path)),
     "try {",
-    "  $content = [System.IO.File]::ReadAllText($path)",
-    "  [System.IO.File]::WriteAllText($out, $content, [System.Text.UTF8Encoding]::new($false))",
+    "  [System.IO.File]::WriteAllBytes($out, [System.IO.File]::ReadAllBytes($path))",
     "  exit 0",
     "} catch {",
     "  exit 1",
@@ -648,8 +757,7 @@ function common.write_file(path, content)
     "$source = " .. _powershell_literal(_windows_path(temp_path)),
     "$target = " .. _powershell_literal(_windows_path(normalized)),
     "try {",
-    "  $content = [System.IO.File]::ReadAllText($source, [System.Text.UTF8Encoding]::new($false))",
-    "  [System.IO.File]::WriteAllText($target, $content, [System.Text.UTF8Encoding]::new($false))",
+    "  [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($source))",
     "  exit 0",
     "} catch {",
     "  exit 1",
@@ -698,8 +806,13 @@ function common.append_file(path, content)
     "$source = " .. _powershell_literal(_windows_path(temp_path)),
     "$target = " .. _powershell_literal(_windows_path(normalized)),
     "try {",
-    "  $content = [System.IO.File]::ReadAllText($source, [System.Text.UTF8Encoding]::new($false))",
-    "  [System.IO.File]::AppendAllText($target, $content, [System.Text.UTF8Encoding]::new($false))",
+    "  $bytes = [System.IO.File]::ReadAllBytes($source)",
+    "  $stream = [System.IO.File]::Open($target, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)",
+    "  try {",
+    "    $stream.Write($bytes, 0, $bytes.Length)",
+    "  } finally {",
+    "    $stream.Dispose()",
+    "  }",
     "  exit 0",
     "} catch {",
     "  exit 1",
@@ -922,14 +1035,51 @@ function common.run_command(command, options)
   local stdin_path = options and options.stdin_path and common.normalize_path(options.stdin_path) or nil
 
   if common.is_windows() then
-    local command_text = common.build_command(args)
-    local wrapped = common.wrap_command_with_cwd(command_text, cwd_path)
-    local redirected = wrapped
-    if stdin_path ~= nil and stdin_path ~= "" then
-      redirected = redirected .. " < " .. common.shell_quote(_windows_path(stdin_path))
+    local resolved_args = {}
+    for index, value in ipairs(args) do
+      if index == 1 then
+        resolved_args[index] = _windows_resolve_command_path(value) or value
+      else
+        resolved_args[index] = value
+      end
     end
-    redirected = redirected .. " > " .. common.shell_quote(_windows_path(output_path)) .. " 2>&1"
-    local ok, kind, code = os.execute(redirected)
+
+    local script = table.concat({
+      "$exe = " .. _powershell_literal(_windows_path(resolved_args[1])),
+      "$out = " .. _powershell_literal(_windows_path(output_path)),
+      "$cwd = " .. _powershell_literal(_windows_path(cwd_path or common.current_dir())),
+      "$stdin = " .. _powershell_literal(_windows_path(stdin_path or "")),
+      "$argText = " .. _powershell_literal(_windows_argument_text(resolved_args)),
+      "try {",
+      "  $psi = New-Object System.Diagnostics.ProcessStartInfo",
+      "  $psi.FileName = $exe",
+      "  $psi.Arguments = $argText",
+      "  $psi.WorkingDirectory = $cwd",
+      "  $psi.UseShellExecute = $false",
+      "  $psi.RedirectStandardOutput = $true",
+      "  $psi.RedirectStandardError = $true",
+      "  if ($stdin -ne '') {",
+      "    $psi.RedirectStandardInput = $true",
+      "  }",
+      "  $process = New-Object System.Diagnostics.Process",
+      "  $process.StartInfo = $psi",
+      "  [void]$process.Start()",
+      "  if ($stdin -ne '') {",
+      "    $content = [System.IO.File]::ReadAllText($stdin, [System.Text.UTF8Encoding]::new($false))",
+      "    $process.StandardInput.Write($content)",
+      "    $process.StandardInput.Close()",
+      "  }",
+      "  $stdout = $process.StandardOutput.ReadToEnd()",
+      "  $stderr = $process.StandardError.ReadToEnd()",
+      "  $process.WaitForExit()",
+      "  [System.IO.File]::WriteAllText($out, $stdout + $stderr, [System.Text.UTF8Encoding]::new($false))",
+      "  exit $process.ExitCode",
+      "} catch {",
+      "  [System.IO.File]::WriteAllText($out, $_.Exception.ToString(), [System.Text.UTF8Encoding]::new($false))",
+      "  exit 1",
+      "}",
+    }, "\n")
+    local ok, kind, code = _windows_execute_powershell(script)
     local success, exit_code = _os_execute_success(ok, kind, code)
     local output = _read_raw_file(output_path) or ""
     common.remove_path(output_path)
