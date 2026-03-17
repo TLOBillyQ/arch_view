@@ -187,3 +187,59 @@ If you are migrating from the old dual-engine behavior:
 1. Replace any `engine="lua"` usage with `engine="auto"` or `engine="go"`.
 2. Keep existing public API entrypoints; they remain compatible.
 3. Treat Lua modules as integration/compatibility layers, not analysis cores.
+
+---
+
+## 中文文档
+
+`arch_view` 是一个用于模块级 `require` 依赖图分析的 Lua 集成层，核心引擎完全由 **Go** 实现。
+
+- **Lua** 负责宿主集成、CLI 入口和兼容性封装。
+- **Go** 是扫描、提取、分类、检查、投影、布局、路由和导出数据生成的唯一真实来源。
+
+### 主要功能
+
+- 将 Lua 源代码树静态扫描为模块依赖图
+- 基于规则的组件分类和禁止依赖检查
+- 投影视图和布局元数据，用于图探索
+- 独立的查看器导出，无外部字体/CDN 依赖
+- 稳定的 Lua 面向 API 和 CLI，由 Go 核心支持
+
+### 引擎模型
+
+`arch_view` 现在使用 **Go 作为唯一的运行时分析引擎**。
+
+- `engine="auto"` → 解析为 Go
+- `engine="go"` → Go
+- `engine="lua"` → **已弃用且不再支持**（返回显式错误）
+
+### 快速开始
+
+在项目根目录创建 `arch_view.config.json`：
+
+```json
+{
+  "source_roots": ["src"],
+  "component_rules": [
+    { "name": "demo", "match": ["^src%.demo$", "^src%.demo%..+"], "component": "demo" }
+  ],
+  "abstract_rules": [],
+  "forbidden_dependency_rules": []
+}
+```
+
+运行：
+
+```bash
+lua bin/arch_view.lua scan --out .arch_view/architecture.json
+lua bin/arch_view.lua check
+lua bin/arch_view.lua viewer --out-dir .arch_view/viewer
+```
+
+### CLI 命令
+
+```bash
+lua bin/arch_view.lua scan --out <file> [--project-root <dir>] [--config <file>] [--engine <auto|go|lua>]
+lua bin/arch_view.lua check [--project-root <dir>] [--config <file>] [--engine <auto|go|lua>]
+lua bin/arch_view.lua viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--engine <auto|go|lua>] [--open]
+```
