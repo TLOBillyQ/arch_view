@@ -1,0 +1,3 @@
+# Go build artifacts
+cmd/*/*.exe
+cmd/*/arch-view-core
