@@ -2,7 +2,6 @@ require("tests.bootstrap")
 
 local arch_view = require("arch_view")
 local common = require("arch_view.runtime.common")
-local json_writer = require("arch_view.runtime.json_writer")
 
 local repo_root = common.normalize_path(common.current_dir())
 local tmp_root = common.join_path(common.system_tmp_dir(), "arch_view_test_api")
@@ -81,16 +80,6 @@ local function _write_sample_project(project_root)
     _write_file(common.join_path(project_root, "src/core_module.lua"), 'local init = require("init")\nreturn {}')
 end
 
-local function _normalize_architecture(architecture)
-    local copy = {}
-    for key, value in pairs(architecture) do
-        if key ~= "project_root" and key ~= "config_path" and key ~= "engine_used" and key ~= "engine_binary" then
-            copy[key] = value
-        end
-    end
-    return copy
-end
-
 local function test_analyze_basic()
     _with_clean_tmp(function()
         local project_root = common.join_path(tmp_root, "analyze_project")
@@ -124,7 +113,7 @@ local function test_check_returns_result()
 
         assert(type(result.check) == "table", "check result should have check field")
         assert(type(result.check.ok) == "boolean", "check.ok should be boolean")
-        assert(type(result.engine) == "string", "should return engine used")
+        assert(result.project_root == project_root, "should return project root")
     end)
 end
 
@@ -168,39 +157,6 @@ local function test_export_viewer_creates_files()
     end)
 end
 
-local function test_go_engine_matches_auto_engine()
-    _with_clean_tmp(function()
-        local project_root = common.join_path(tmp_root, "go_compare_project")
-        _write_sample_project(project_root)
-
-        local auto_architecture, auto_err = arch_view.analyze({
-            project_root = project_root,
-            engine = "auto",
-        })
-        if auto_architecture == nil then
-            error(auto_err)
-        end
-
-        local go_architecture, go_err = arch_view.analyze({
-            project_root = project_root,
-            engine = "go",
-        })
-        if go_architecture == nil then
-            error(go_err)
-        end
-
-        local normalized_go = _normalize_architecture(go_architecture)
-        local normalized_auto = _normalize_architecture(auto_architecture)
-
-        _assert_eq(json_writer.encode(normalized_go.graph), json_writer.encode(normalized_auto.graph),
-            "go graph should match auto graph")
-        _assert_eq(json_writer.encode(normalized_go.modules), json_writer.encode(normalized_auto.modules),
-            "go modules should match auto modules")
-        _assert_eq(json_writer.encode(normalized_go.layout), json_writer.encode(normalized_auto.layout),
-            "go layout should match auto layout")
-    end)
-end
-
 local function test_viewer_export_is_self_contained()
     _with_clean_tmp(function()
         local project_root = common.join_path(tmp_root, "self_contained_project")
@@ -226,6 +182,5 @@ return {
     test_check_returns_result = test_check_returns_result,
     test_write_scan_creates_file = test_write_scan_creates_file,
     test_export_viewer_creates_files = test_export_viewer_creates_files,
-    test_go_engine_matches_auto_engine = test_go_engine_matches_auto_engine,
     test_viewer_export_is_self_contained = test_viewer_export_is_self_contained,
 }

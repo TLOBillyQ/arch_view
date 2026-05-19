@@ -12,11 +12,10 @@ function cli.run(args, env)
 
   local opts = {
     cwd = env.cwd,
+    command_name = env.command_name,
     open_path = env.open_path,
     default_project_root = env.default_project_root,
     default_config_path = env.default_config_path,
-    default_engine = env.default_engine,
-    toolchain_root = env.toolchain_root,
   }
 
   if env.script_dir ~= nil then

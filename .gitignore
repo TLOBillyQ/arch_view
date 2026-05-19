@@ -1,3 +1,2 @@
-# Go build artifacts
-cmd/*/*.exe
-cmd/*/arch-view-core
+*.luac
+.DS_Store

@@ -1,6 +1,6 @@
 package.path = table.concat({
-  "vendor/arch_view/?.lua",
-  "vendor/arch_view/?/?.lua",
+  "vendor/arch_view/lib/?.lua",
+  "vendor/arch_view/lib/?/init.lua",
   package.path,
 }, ";")
 

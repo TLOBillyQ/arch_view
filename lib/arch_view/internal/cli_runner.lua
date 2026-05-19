@@ -9,12 +9,13 @@ local function _text(zh, en)
   return common.bilingual(zh, en)
 end
 
-local function _usage()
+local function _usage(command_name)
+  local name = tostring(command_name or "tools/quality/arch.lua")
   io.write(_text("用法", "Usage") .. ":\n")
-  io.write("  lua bin/arch_view.lua scan --out <file> [--project-root <dir>] [--config <file>]\n")
-  io.write("  lua bin/arch_view.lua check [--project-root <dir>] [--config <file>]\n")
-  io.write("  lua bin/arch_view.lua viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--open]\n")
-  io.write("  lua bin/arch_view.lua\n")
+  io.write("  lua " .. name .. " scan --out <file> [--project-root <dir>] [--config <file>]\n")
+  io.write("  lua " .. name .. " check [--project-root <dir>] [--config <file>]\n")
+  io.write("  lua " .. name .. " viewer [--out-dir <dir>] [--project-root <dir>] [--config <file>] [--in-json <file>] [--open]\n")
+  io.write("  lua " .. name .. "\n")
 end
 
 local function _parse_args(args)
@@ -26,7 +27,6 @@ local function _parse_args(args)
     out_dir = nil,
     in_json = nil,
     open = false,
-    engine = "auto",
   }
   local index = 2
   while index <= #args do
@@ -49,9 +49,6 @@ local function _parse_args(args)
     elseif token == "--open" then
       options.open = true
       index = index + 1
-    elseif token == "--engine" then
-      options.engine = args[index + 1]
-      index = index + 2
     else
       error(_text(
         "未知参数: " .. tostring(token),
@@ -82,10 +79,8 @@ local function _normalize_options(parsed, opts)
     out_dir = _resolve_project_path(project_root, parsed.out_dir),
     in_json = _resolve_project_path(project_root, parsed.in_json),
     open = parsed.open,
-    engine = parsed.engine or opts.default_engine or "auto",
     asset_root = opts.asset_root and fs.resolve_path(cwd, opts.asset_root) or paths.default_asset_root(),
     open_path = opts.open_path,
-    toolchain_root = opts.toolchain_root and fs.resolve_path(cwd, opts.toolchain_root) or nil,
   }
 end
 
@@ -118,10 +113,11 @@ local function _run_check(options)
 end
 
 function cli.run(args, opts)
+  opts = opts or {}
   local parsed = _parse_args(args or {})
   local command = parsed.command
   if command == "--help" or command == "-h" then
-    _usage()
+    _usage(opts.command_name)
     return true
   end
   if command == nil then
@@ -152,7 +148,7 @@ function cli.run(args, opts)
     return true
   end
 
-  _usage()
+  _usage(opts.command_name)
   error(_text(
     "未知命令: " .. tostring(command),
     "Unknown command: " .. tostring(command)

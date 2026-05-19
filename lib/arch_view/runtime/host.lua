@@ -306,20 +306,6 @@ local function _windows_known_command_dirs()
     _push(entry)
   end
 
-  local program_files = os.getenv("ProgramFiles")
-  if program_files ~= nil and program_files ~= "" then
-    _push(program_files .. "/Go/bin")
-  end
-  local program_files_x86 = os.getenv("ProgramFiles(x86)")
-  if program_files_x86 ~= nil and program_files_x86 ~= "" then
-    _push(program_files_x86 .. "/Go/bin")
-  end
-  local user_profile = os.getenv("USERPROFILE")
-  if user_profile ~= nil and user_profile ~= "" then
-    _push(user_profile .. "/scoop/apps/go/current/bin")
-  end
-  _push("C:/Go/bin")
-
   return dirs
 end
 
