@@ -647,15 +647,15 @@ end
 
 function common.read_file(path)
   local normalized = common.normalize_path(path)
-  if not common.is_windows() then
-    local content = _read_raw_file(normalized)
-    if content == nil then
-      return nil, common.bilingual(
-        "无法打开文件: " .. tostring(path),
-        "Cannot open file: " .. tostring(path)
-      )
-    end
+  local content = _read_raw_file(normalized)
+  if content ~= nil then
     return content
+  end
+  if not common.is_windows() then
+    return nil, common.bilingual(
+      "无法打开文件: " .. tostring(path),
+      "Cannot open file: " .. tostring(path)
+    )
   end
 
   local output_path = common.make_temp_path("read_file", ".txt")
